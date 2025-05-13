@@ -5,6 +5,13 @@ from dotenv import load_dotenv
 import os
 
 load_dotenv()
+mcp = FastMCP(
+    name="test",
+    port=8001,
+    timeout=30,
+    debug=True
+)
+
 logger = logging.getLogger(__name__)
 Tavily_API_KEY = os.getenv("TAVILY_API_KEY", "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")
 
@@ -49,13 +56,5 @@ def tool_tavily(query: str) -> str:
         logger.error(f"Error performing Tavily search: {e}")
         return f"An error occurred during the search: {str(e)}"
 
-# MCP server setup
-mcp = FastMCP(
-    name="test",
-    port=8001,
-    timeout=30,
-    debug=True
-)
-
 if __name__ == "__main__":
-    mcp.run(transport='sse')  # STDIO for local protocol
+    mcp.run(transport='sse')
