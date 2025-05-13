@@ -1,12 +1,12 @@
 from langchain_community.tools.tavily_search import TavilySearchResults
+from mcp.server.fastmcp import FastMCP
 import logging
 from dotenv import load_dotenv
-from mcp.server.fastmcp import FastMCP
 import os
 
 load_dotenv()
 logger = logging.getLogger(__name__)
-Tavily_API_KEY = os.getenv("TAVILY_API_KEY", "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") 
+Tavily_API_KEY = os.getenv("TAVILY_API_KEY", "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")
 
 @mcp.tool()
 def tool_tavily(query: str) -> str:
@@ -49,11 +49,13 @@ def tool_tavily(query: str) -> str:
         logger.error(f"Error performing Tavily search: {e}")
         return f"An error occurred during the search: {str(e)}"
 
+# MCP server setup
+mcp = FastMCP(
+    name="test",
+    port=8001,
+    timeout=30,
+    debug=True
+)
+
 if __name__ == "__main__":
-    mcp = FastMCP(
-        name="test",
-        port=8001,
-        timeout=30,
-        debug=True
-    )
-    mcp.run(transport='sse')
+    mcp.run(transport='sse')  # STDIO for local protocol
