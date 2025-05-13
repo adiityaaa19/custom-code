@@ -1,16 +1,16 @@
-name: Deploy Agent to Cloud Run
+name: Deploy App to Cloud Run
 
 on:
   push:
     branches:
       - main
     paths:
-      - 'app/**' 
+      - 'app/**'  # Updated to reflect the new folder name 'app'
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    name: Build and Deploy Agent
+    name: Build and Deploy App
 
     steps:
       - name: Checkout code
@@ -32,16 +32,16 @@ jobs:
 
       - name: Build Docker image
         run: |
-          docker build -t asia-south1-docker.pkg.dev/model-journal-454909-k1/toolmcp/agent-service ./app
+          docker build -t asia-south1-docker.pkg.dev/model-journal-454909-k1/toolmcp/app-service ./app  # Updated folder name
 
       - name: Push Docker image to Artifact Registry
         run: |
-          docker push asia-south1-docker.pkg.dev/model-journal-454909-k1/toolmcp/agent-service
+          docker push asia-south1-docker.pkg.dev/model-journal-454909-k1/toolmcp/app-service  # Updated folder name
 
       - name: Deploy to Cloud Run
         run: |
-          gcloud run deploy agent-service \
-            --image asia-south1-docker.pkg.dev/model-journal-454909-k1/toolmcp/agent-service \
+          gcloud run deploy app-service \
+            --image asia-south1-docker.pkg.dev/model-journal-454909-k1/toolmcp/app-service \
             --platform managed \
             --region asia-south1 \
             --allow-unauthenticated
