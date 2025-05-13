@@ -8,7 +8,6 @@ load_dotenv()
 
 mcp = FastMCP(
     name="test",
-    port=8080
     timeout=30,
     debug=True)
 
@@ -57,4 +56,4 @@ def tool_tavily(query: str) -> str:
         return f"An error occurred during the search: {str(e)}"
 
 if __name__ == "__main__":
-    mcp.run(transport='sse')  # STDIO for local prot
+    mcp.run(transport='sse')  # STDIO for local protocol
