@@ -5,13 +5,15 @@ WORKDIR /app
 
 # Copy only the necessary files
 COPY requirements.txt .
-COPY main.py .
 
 # Install dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Copy the rest of the application code
+COPY . .
+
 # Expose the application port
-EXPOSE 8001
+EXPOSE 8000
 
 # Ensure environment variables from .env are read at runtime
 ENV PYTHONUNBUFFERED=1
