@@ -57,4 +57,4 @@ def tool_tavily(query: str) -> str:
         return f"An error occurred during the search: {str(e)}"
 
 if __name__ == "__main__":
-    mcp.run(transport='sse')  # STDIO for local protocol
+    mcp.run(transport='sse')  # STDIO for local prot
