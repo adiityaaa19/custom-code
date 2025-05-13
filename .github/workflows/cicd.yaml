@@ -1,16 +1,16 @@
-name: Deploy Agent Service to Cloud Run
+name: Deploy Agent to Cloud Run
 
 on:
   push:
     branches:
       - main
     paths:
-      - 'app/**'
+      - 'app/**' 
 
 jobs:
   deploy:
-    name: Build & Deploy Agent to Cloud Run
     runs-on: ubuntu-latest
+    name: Build and Deploy Agent
 
     steps:
       - name: Checkout code
@@ -26,21 +26,22 @@ jobs:
         with:
           project_id: model-journal-454909-k1
 
-      - name: Configure Docker to use gcloud as a credential helper
-        run: gcloud auth configure-docker
+      - name: Configure Docker to use Artifact Registry
+        run: |
+          gcloud auth configure-docker asia-south1-docker.pkg.dev
 
       - name: Build Docker image
         run: |
-          docker build -t gcr.io/model-journal-454909-k1/agent-service ./app
+          docker build -t asia-south1-docker.pkg.dev/model-journal-454909-k1/toolmcp/agent-service ./app
 
-      - name: Push Docker image to Google Container Registry
+      - name: Push Docker image to Artifact Registry
         run: |
-          docker push gcr.io/model-journal-454909-k1/agent-service
+          docker push asia-south1-docker.pkg.dev/model-journal-454909-k1/toolmcp/agent-service
 
       - name: Deploy to Cloud Run
         run: |
           gcloud run deploy agent-service \
-            --image gcr.io/model-journal-454909-k1/agent-service \
+            --image asia-south1-docker.pkg.dev/model-journal-454909-k1/toolmcp/agent-service \
             --platform managed \
-            --region us-central1 \
+            --region asia-south1 \
             --allow-unauthenticated
