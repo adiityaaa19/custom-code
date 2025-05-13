@@ -1,0 +1,46 @@
+name: Deploy Agent Service to Cloud Run
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'agent/**'
+
+jobs:
+  deploy:
+    name: Build & Deploy Agent to Cloud Run
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Authenticate with Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: '${{ secrets.GCP_SA_KEY }}'
+
+      - name: Set up gcloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: model-journal-454909-k1
+
+      - name: Configure Docker to use gcloud as a credential helper
+        run: gcloud auth configure-docker
+
+      - name: Build Docker image
+        run: |
+          docker build -t gcr.io/model-journal-454909-k1/agent-service ./agent
+
+      - name: Push Docker image to Google Container Registry
+        run: |
+          docker push gcr.io/model-journal-454909-k1/agent-service
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy agent-service \
+            --image gcr.io/model-journal-454909-k1/agent-service \
+            --platform managed \
+            --region us-central1 \
+            --allow-unauthenticated
