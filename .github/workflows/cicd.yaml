@@ -31,7 +31,7 @@ jobs:
 
       - name: Build Docker image
         run: |
-          docker build -t gcr.io/model-journal-454909-k1/agent-service ./agent
+          docker build -t gcr.io/model-journal-454909-k1/agent-service ./app
 
       - name: Push Docker image to Google Container Registry
         run: |
