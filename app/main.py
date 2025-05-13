@@ -8,7 +8,6 @@ load_dotenv()
 
 mcp = FastMCP(
     name="test",
-    port=8080,
     timeout=30,
     debug=True)
 
