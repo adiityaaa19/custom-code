@@ -5,7 +5,7 @@ on:
     branches:
       - main
     paths:
-      - 'app/**'  # Updated to reflect the new folder name 'app'
+      - 'ok/**'  # Updated to reflect the new folder name 'app'
 
 jobs:
   deploy:
