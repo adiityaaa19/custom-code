@@ -6,8 +6,8 @@ on:
       sha:
         description: "Commit SHA to deploy"
         required: true
-      tool_file:
-        description: "Path to main Python tool file (e.g. tools/user123/my-tool-id/main.py)"
+      tool_dir:
+        description: "Path to tool directory (e.g. tools/user123/tool-xyz123/)"
         required: true
 
 jobs:
@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      TOOL_FILE: ${{ github.event.inputs.tool_file }}
+      TOOL_DIR: ${{ github.event.inputs.tool_dir }}
 
     steps:
       - name: Checkout code at requested SHA
@@ -23,14 +23,15 @@ jobs:
         with:
           ref: ${{ github.event.inputs.sha }}
 
-      - name: Parse tool metadata
+      - name: Determine Python file and tool name
         id: metadata
         run: |
-          TOOL_FILE=${{ github.event.inputs.tool_file }}
-          TOOL_NAME=$(basename "$TOOL_FILE" .py)
-          TOOL_DIR=$(dirname "$TOOL_FILE")
+          cd "$TOOL_DIR"
+          PY_FILE=$(find . -maxdepth 1 -name '*.py' | head -n 1)
+          TOOL_NAME=$(basename "$PY_FILE" .py)
           echo "TOOL_NAME=$TOOL_NAME" >> $GITHUB_ENV
-          echo "TOOL_DIR=$TOOL_DIR" >> $GITHUB_ENV
+          echo "PY_FILE=$PY_FILE" >> $GITHUB_ENV
+          echo "tool_name=$TOOL_NAME" >> $GITHUB_OUTPUT
 
       - name: Azure Login
         uses: azure/login@v1
@@ -73,7 +74,7 @@ jobs:
         run: |
           echo "tool_id=$TOOL_NAME" > $TOOL_NAME.txt
           echo "tool_name=$TOOL_NAME" >> $TOOL_NAME.txt
-          echo "filepath=$TOOL_FILE" >> $TOOL_NAME.txt
+          echo "filepath=$TOOL_DIR" >> $TOOL_NAME.txt
           echo "sha=${{ github.event.inputs.sha }}" >> $TOOL_NAME.txt
           echo "run_id=${{ github.run_id }}" >> $TOOL_NAME.txt
           echo "status=completed" >> $TOOL_NAME.txt
