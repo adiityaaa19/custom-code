@@ -77,7 +77,7 @@ jobs:
           echo "filepath=$TOOL_DIR" >> $TOOL_NAME.txt
           echo "sha=${{ github.event.inputs.sha }}" >> $TOOL_NAME.txt
           echo "run_id=${{ github.run_id }}" >> $TOOL_NAME.txt
-          echo "status=sucess" >> $TOOL_NAME.txt
+          echo "status=success" >> $TOOL_NAME.txt
           echo "endpoint=${{ steps.deploy.outputs.DEPLOYED_URL }}" >> $TOOL_NAME.txt
 
       - name: Upload Artifact
