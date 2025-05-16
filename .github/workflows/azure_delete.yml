@@ -56,7 +56,7 @@ jobs:
           set +e
           for rev in $REVISIONS; do
             echo "Deactivating revision: $rev"
-            az containerapp revision activate \
+            az containerapp revision deactivate \
               --name "${{ github.event.inputs.container_app_name }}" \
               --resource-group "${{ github.event.inputs.resource_group }}" \
               --revision "$rev" > deactivate_$rev.log 2>&1
