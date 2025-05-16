@@ -1,4 +1,3 @@
-fastmcphttpx
 starlette
 fastmcp
 uvicorn
