@@ -1,10 +1,10 @@
-name: Delete Azure Container App
- 
+name: Stop Azure Container App by Deactivating Revisions
+
 on:
   workflow_dispatch:
     inputs:
-      container_url_or_name:
-        description: 'Container App URL or Name'
+      container_app_name:
+        description: 'Name of the Container App to stop'
         required: true
         type: string
       resource_group:
@@ -15,51 +15,82 @@ on:
         description: 'Azure Subscription ID'
         required: true
         type: string
- 
+
 jobs:
-  delete:
+  stop:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout (optional)
         uses: actions/checkout@v3
- 
+
       - name: Azure Login
         uses: azure/login@v1
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
- 
-      - name: Extract Container App Name
-        id: extract
-        run: |
-          if [[ "${{ github.event.inputs.container_url_or_name }}" == http* ]]; then
-            CONTAINER_APP_NAME=$(echo "${{ github.event.inputs.container_url_or_name }}" | sed -E 's~https?://([^.]+)\..*~\1~')
-          else
-            CONTAINER_APP_NAME="${{ github.event.inputs.container_url_or_name }}"
-          fi
-          echo "CONTAINER_APP_NAME=$CONTAINER_APP_NAME" >> $GITHUB_ENV
- 
-      - name: Delete Container App
-        id: deleteapp
+
+      - name: Get Active Revisions
+        id: get_revisions
         run: |
           set +e
-          az containerapp delete --name "$CONTAINER_APP_NAME" --resource-group "${{ github.event.inputs.resource_group }}" --yes > delete_log.txt 2>&1
-          STATUS=$?
-          echo "status=$STATUS" >> $GITHUB_OUTPUT
-          if [ $STATUS -eq 0 ]; then
-            echo "success" > result.txt
+          # Get all active revisions
+          revisions=$(az containerapp revision list \
+            --name "${{ github.event.inputs.container_app_name }}" \
+            --resource-group "${{ github.event.inputs.resource_group }}" \
+            --query "[?properties.active].name" \
+            -o tsv)
+          
+          if [ -z "$revisions" ]; then
+            echo "No active revisions found - app may already be stopped"
+            echo "REVISIONS=" >> $GITHUB_ENV
+            echo "status=success" >> $GITHUB_OUTPUT
           else
-            echo "failure" > result.txt
-            cat delete_log.txt
+            echo "Found active revisions: $revisions"
+            echo "REVISIONS=$revisions" >> $GITHUB_ENV
+            echo "status=pending" >> $GITHUB_OUTPUT
           fi
- 
+          echo "$revisions" > revisions.txt
+
+      - name: Deactivate Revisions
+        if: env.REVISIONS != ''
+        run: |
+          set +e
+          for rev in $REVISIONS; do
+            echo "Deactivating revision: $rev"
+            az containerapp revision activate \
+              --name "${{ github.event.inputs.container_app_name }}" \
+              --resource-group "${{ github.event.inputs.resource_group }}" \
+              --revision "$rev" > deactivate_$rev.log 2>&1
+            STATUS=$?
+            if [ $STATUS -ne 0 ]; then
+              echo "Failed to deactivate revision $rev"
+              cat deactivate_$rev.log
+              echo "failure" > result.txt
+              exit 1
+            fi
+          done
+          echo "success" > result.txt
+
+      - name: Handle Already Stopped Case
+        if: env.REVISIONS == ''
+        run: |
+          echo "App was already stopped - no revisions to deactivate"
+          echo "success" > result.txt
+
       - name: Upload Result Artifact
-        uses: actions/upload-artifact@v4.6.2
+        uses: actions/upload-artifact@v4
         with:
-          name: delete-result-${{ env.CONTAINER_APP_NAME }}
+          name: stop-result-${{ github.event.inputs.container_app_name }}
           path: result.txt
- 
-      - name: Upload Log Artifact (optional)
-        uses: actions/upload-artifact@v4.6.2
+
+      - name: Upload Revision List
+        uses: actions/upload-artifact@v4
         with:
-          name: delete-log-${{ env.CONTAINER_APP_NAME }}
-          path: delete_log.txt
+          name: stop-revisions-${{ github.event.inputs.container_app_name }}
+          path: revisions.txt
+
+      - name: Upload Deactivation Logs
+        if: env.REVISIONS != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: stop-logs-${{ github.event.inputs.container_app_name }}
+          path: deactivate_*.log
