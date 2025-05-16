@@ -1,4 +1,4 @@
-name: Start Azure Container App by Activating Revisions
+name: Start Azure Container App by Activating Revision
 
 on:
   workflow_dispatch:
@@ -20,6 +20,9 @@ jobs:
   start:
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
       - name: Azure Login
         uses: azure/login@v1
         with:
@@ -32,11 +35,11 @@ jobs:
           revisions=$(az containerapp revision list \
             --name "${{ github.event.inputs.container_app_name }}" \
             --resource-group "${{ github.event.inputs.resource_group }}" \
-            --query "[?properties.active==\`false\`].name" \
-            -o tsv)
-          
+            --all \
+            --query "[?properties.active==\`false\`].name" -o tsv)
+
           if [ -z "$revisions" ]; then
-            echo "No inactive revisions found - app may already be running"
+            echo "No inactive revisions found"
             echo "REVISIONS=" >> $GITHUB_ENV
             echo "status=success" >> $GITHUB_OUTPUT
           else
@@ -46,7 +49,7 @@ jobs:
           fi
           echo "$revisions" > revisions.txt
 
-      - name: Activate Revisions
+      - name: Activate Revision
         if: env.REVISIONS != ''
         run: |
           set +e
@@ -63,28 +66,23 @@ jobs:
               echo "failure" > result.txt
               exit 1
             fi
+            break  # Activate only the first one
           done
           echo "success" > result.txt
 
-      - name: Handle Already Running Case
-        if: env.REVISIONS == ''
-        run: |
-          echo "App was already running - no revisions to activate"
-          echo "success" > result.txt
-
-      - name: Upload Result Artifact
+      - name: Upload Result
         uses: actions/upload-artifact@v4
         with:
           name: start-result-${{ github.event.inputs.container_app_name }}
           path: result.txt
 
-      - name: Upload Revision List
+      - name: Upload Revisions
         uses: actions/upload-artifact@v4
         with:
           name: start-revisions-${{ github.event.inputs.container_app_name }}
           path: revisions.txt
 
-      - name: Upload Activation Logs
+      - name: Upload Logs
         if: env.REVISIONS != ''
         uses: actions/upload-artifact@v4
         with:
