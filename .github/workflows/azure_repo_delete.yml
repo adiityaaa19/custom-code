@@ -1,0 +1,100 @@
+name: Delete Azure Container App and its Container Registry Repositories
+
+on:
+  workflow_dispatch:
+    inputs:
+      container_url_or_name:
+        description: 'Container App URL or Name'
+        required: true
+        type: string
+      resource_group:
+        description: 'Azure Resource Group'
+        required: true
+        type: string
+      subscription_id:
+        description: 'Azure Subscription ID'
+        required: true
+        type: string
+      acr_name:
+        description: 'Azure Container Registry Name (without .azurecr.io)'
+        required: true
+        type: string
+
+jobs:
+  delete:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (optional)
+        uses: actions/checkout@v3
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Extract Container App Name
+        id: extract
+        run: |
+          if [[ "${{ github.event.inputs.container_url_or_name }}" == http* ]]; then
+            CONTAINER_APP_NAME=$(echo "${{ github.event.inputs.container_url_or_name }}" | sed -E 's~https?://([^.]+)\..*~\1~')
+          else
+            CONTAINER_APP_NAME="${{ github.event.inputs.container_url_or_name }}"
+          fi
+          echo "CONTAINER_APP_NAME=$CONTAINER_APP_NAME" >> $GITHUB_ENV
+
+      - name: Delete Container App
+        id: deleteapp
+        run: |
+          set +e
+          az containerapp delete --name "$CONTAINER_APP_NAME" --resource-group "${{ github.event.inputs.resource_group }}" --yes > delete_log.txt 2>&1
+          STATUS=$?
+          echo "status=$STATUS" >> $GITHUB_OUTPUT
+          if [ $STATUS -eq 0 ]; then
+            echo "success" > result.txt
+          else
+            echo "failure" > result.txt
+            cat delete_log.txt
+          fi
+
+      - name: Login to Azure Container Registry
+        run: |
+          az acr login --name ${{ github.event.inputs.acr_name }}
+
+      - name: List repositories in ACR
+        id: list_repos
+        run: |
+          REPOS=$(az acr repository list --name ${{ github.event.inputs.acr_name }} --output tsv)
+          echo "REPOS=$REPOS" >> $GITHUB_ENV
+          echo "$REPOS" > acr_repos.txt
+
+      - name: Delete Container App related repositories
+        run: |
+          set +e
+          APP_NAME=$CONTAINER_APP_NAME
+          for repo in $REPOS; do
+            # Adjust this filter as per your repo naming pattern for container apps
+            if [[ "$repo" == *"$APP_NAME"* ]]; then
+              echo "Deleting repository: $repo"
+              az acr repository delete --name ${{ github.event.inputs.acr_name }} --repository "$repo" --yes
+            else
+              echo "Skipping repository: $repo"
+            fi
+          done
+
+      - name: Upload Result Artifact
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: delete-result-${{ env.CONTAINER_APP_NAME }}
+          path: result.txt
+
+      - name: Upload Log Artifact (optional)
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: delete-log-${{ env.CONTAINER_APP_NAME }}
+          path: delete_log.txt
+
+      - name: Upload ACR Repositories List
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: acr-repos-${{ env.CONTAINER_APP_NAME }}
+          path: acr_repos.txt
