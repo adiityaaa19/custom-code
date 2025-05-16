@@ -1,10 +1,10 @@
-name: Stop Azure Container App by Deactivating Revisions
+name: Start Azure Container App by Activating Revisions
 
 on:
   workflow_dispatch:
     inputs:
       container_app_name:
-        description: 'Name of the Container App to stop'
+        description: 'Name of the Container App to start'
         required: true
         type: string
       resource_group:
@@ -17,7 +17,7 @@ on:
         type: string
 
 jobs:
-  stop:
+  start:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout (optional)
@@ -28,23 +28,23 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Get Active Revisions
+      - name: Get Inactive Revisions
         id: get_revisions
         run: |
           set +e
-          # Get all active revisions
+          # Get all inactive revisions
           revisions=$(az containerapp revision list \
             --name "${{ github.event.inputs.container_app_name }}" \
             --resource-group "${{ github.event.inputs.resource_group }}" \
-            --query "[?properties.deactive].name" \
+            --query "[?properties.active==\`false\`].name" \
             -o tsv)
           
           if [ -z "$revisions" ]; then
-            echo "No deactive revisions found - app may already be start"
+            echo "No inactive revisions found - app may already be running"
             echo "REVISIONS=" >> $GITHUB_ENV
             echo "status=success" >> $GITHUB_OUTPUT
           else
-            echo "Found deactive revisions: $revisions"
+            echo "Found inactive revisions: $revisions"
             echo "REVISIONS=$revisions" >> $GITHUB_ENV
             echo "status=pending" >> $GITHUB_OUTPUT
           fi
@@ -55,42 +55,42 @@ jobs:
         run: |
           set +e
           for rev in $REVISIONS; do
-            echo "Deactivating revision: $rev"
+            echo "Activating revision: $rev"
             az containerapp revision activate \
               --name "${{ github.event.inputs.container_app_name }}" \
               --resource-group "${{ github.event.inputs.resource_group }}" \
-              --revision "$rev" > deactivate_$rev.log 2>&1
+              --revision "$rev" > activate_$rev.log 2>&1
             STATUS=$?
             if [ $STATUS -ne 0 ]; then
-              echo "Failed to Activate revision $rev"
-              cat deactivate_$rev.log
+              echo "Failed to activate revision $rev"
+              cat activate_$rev.log
               echo "failure" > result.txt
               exit 1
             fi
           done
           echo "success" > result.txt
 
-      - name: Handle Already Stopped Case
+      - name: Handle Already Running Case
         if: env.REVISIONS == ''
         run: |
-          echo "App was already running - no revisions to Activate"
+          echo "App was already running - no revisions to activate"
           echo "success" > result.txt
 
       - name: Upload Result Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: stop-result-${{ github.event.inputs.container_app_name }}
+          name: start-result-${{ github.event.inputs.container_app_name }}
           path: result.txt
 
       - name: Upload Revision List
         uses: actions/upload-artifact@v4
         with:
-          name: stop-revisions-${{ github.event.inputs.container_app_name }}
+          name: start-revisions-${{ github.event.inputs.container_app_name }}
           path: revisions.txt
 
-      - name: Upload activation Logs
+      - name: Upload Activation Logs
         if: env.REVISIONS != ''
         uses: actions/upload-artifact@v4
         with:
-          name: stop-logs-${{ github.event.inputs.container_app_name }}
+          name: start-logs-${{ github.event.inputs.container_app_name }}
           path: activate_*.log
