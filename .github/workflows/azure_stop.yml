@@ -38,8 +38,8 @@ jobs:
           fi
           echo "CONTAINER_APP_NAME=$CONTAINER_APP_NAME" >> $GITHUB_ENV
  
-      - name: STOP Container App
-        id: stopapp
+      - name: delete Container App
+        id: deleteapp
         run: |
           set +e
           az containerapp stop --name "$CONTAINER_APP_NAME" --resource-group "${{ github.event.inputs.resource_group }}" --yes > delete_log.txt 2>&1
@@ -49,17 +49,17 @@ jobs:
             echo "success" > result.txt
           else
             echo "failure" > result.txt
-            cat stop_log.txt
+            cat delete_log.txt
           fi
  
       - name: Upload Result Artifact
         uses: actions/upload-artifact@v4.6.2
         with:
-          name: stop-result-${{ env.CONTAINER_APP_NAME }}
+          name: delete-result-${{ env.CONTAINER_APP_NAME }}
           path: result.txt
  
       - name: Upload Log Artifact (optional)
         uses: actions/upload-artifact@v4.6.2
         with:
-          name: stop-log-${{ env.CONTAINER_APP_NAME }}
-          path: stop_log.txt
+          name: delete-log-${{ env.CONTAINER_APP_NAME }}
+          path: delete_log.txt
