@@ -1,5 +1,5 @@
-name: Stop Azure Container App
-
+name: STOP Azure Container App
+ 
 on:
   workflow_dispatch:
     inputs:
@@ -15,16 +15,19 @@ on:
         description: 'Azure Subscription ID'
         required: true
         type: string
-
+ 
 jobs:
-  stop:
+  STOP:
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout (optional)
+        uses: actions/checkout@v3
+ 
       - name: Azure Login
         uses: azure/login@v1
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
-
+ 
       - name: Extract Container App Name
         id: extract
         run: |
@@ -34,14 +37,12 @@ jobs:
             CONTAINER_APP_NAME="${{ github.event.inputs.container_url_or_name }}"
           fi
           echo "CONTAINER_APP_NAME=$CONTAINER_APP_NAME" >> $GITHUB_ENV
-
-      - name: Stop Container App
+ 
+      - name: STOP Container App
         id: stopapp
         run: |
           set +e
-          az containerapp revision list --name "$CONTAINER_APP_NAME" --resource-group "${{ github.event.inputs.resource_group }}" > revisions.json
-          LATEST_REVISION=$(jq -r '.[0].name' revisions.json)
-          az containerapp revision deactivate --name "$CONTAINER_APP_NAME" --resource-group "${{ github.event.inputs.resource_group }}" --revision "$LATEST_REVISION" > stop_log.txt 2>&1
+          az containerapp stop --name "$CONTAINER_APP_NAME" --resource-group "${{ github.event.inputs.resource_group }}" --yes > delete_log.txt 2>&1
           STATUS=$?
           echo "status=$STATUS" >> $GITHUB_OUTPUT
           if [ $STATUS -eq 0 ]; then
@@ -50,14 +51,14 @@ jobs:
             echo "failure" > result.txt
             cat stop_log.txt
           fi
-
+ 
       - name: Upload Result Artifact
         uses: actions/upload-artifact@v4.6.2
         with:
           name: stop-result-${{ env.CONTAINER_APP_NAME }}
           path: result.txt
-
-      - name: Upload Log Artifact
+ 
+      - name: Upload Log Artifact (optional)
         uses: actions/upload-artifact@v4.6.2
         with:
           name: stop-log-${{ env.CONTAINER_APP_NAME }}
