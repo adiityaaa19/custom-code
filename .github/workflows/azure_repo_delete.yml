@@ -64,15 +64,14 @@ jobs:
         id: list_repos
         run: |
           REPOS=$(az acr repository list --name ${{ github.event.inputs.acr_name }} --output tsv)
-          echo "REPOS=$REPOS" >> $GITHUB_ENV
           echo "$REPOS" > acr_repos.txt
 
       - name: Delete Container App related repositories
         run: |
           set +e
           APP_NAME=$CONTAINER_APP_NAME
+          REPOS=$(cat acr_repos.txt)
           for repo in $REPOS; do
-            # Adjust this filter as per your repo naming pattern for container apps
             if [[ "$repo" == *"$APP_NAME"* ]]; then
               echo "Deleting repository: $repo"
               az acr repository delete --name ${{ github.event.inputs.acr_name }} --repository "$repo" --yes
