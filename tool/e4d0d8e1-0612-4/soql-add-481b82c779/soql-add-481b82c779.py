@@ -505,7 +505,7 @@ class SalesforceHandler:
    
 #     chat_history.append(AIMessage(content=soql_query_response))
 #     return soql_query_response
-from chatrequest import ChatRequest 
+
 @mcp.tool()
 async def tool_soql(query: str) -> str:
     """
@@ -568,7 +568,7 @@ async def tool_soql(query: str) -> str:
 
 
 @mcp.tool()
-async def add_numbers(a: float, b: float,tool_params:ChatRequest) -> float:
+async def add_numbers(a: float, b: float) -> float:
     """
     Adds two numbers and returns the sum.
 
@@ -579,7 +579,7 @@ async def add_numbers(a: float, b: float,tool_params:ChatRequest) -> float:
     Returns:
         float: The sum of a and b
     """
-    print("tool params in toollllll",tool_params)
+    print("tool params in toollllll")
 
     return a + b
  
