@@ -21,7 +21,7 @@ import asyncio
 
 mcp=FastMCP(
     name="tool_soql",
-    port=8003,
+    port=80,
     timeout=30,
     debug=True
 )
