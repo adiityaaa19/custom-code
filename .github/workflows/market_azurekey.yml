@@ -34,19 +34,37 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Build and Push Docker Image
+      - name: Parse credentials and prepare .env file
         run: |
-          # Parse credentials JSON into environment variables
-          echo "$CREDENTIALS_JSON" > credentials.json
-          ENV_VARS=$(jq -r 'to_entries[] | "--env \(.key)=\(.value)"' credentials.json | tr '\n' ' ')
-          
+          echo "$CREDENTIALS_JSON" | jq -r 'to_entries[] | "\(.key)=\(.value)"' > .env
+
+      - name: Build Docker Image
+        run: |
           docker build -t ${{ secrets.AZURE_CONTAINER_REGISTRY }}/$TOOL_NAME:latest $TOOL_DIR
+
+      - name: Push Docker Image
+        run: |
           echo ${{ secrets.AZURE_ACR_PASSWORD }} | docker login ${{ secrets.AZURE_CONTAINER_REGISTRY }} -u ${{ secrets.AZURE_ACR_USERNAME }} --password-stdin
           docker push ${{ secrets.AZURE_CONTAINER_REGISTRY }}/$TOOL_NAME:latest
 
-      - name: Deploy or Update Azure Container App
-        id: deploy
+      - name: Deploy to Azure Container Apps
         run: |
-          # Load credentials as environment variables
-          echo "$CREDENTIALS_JSON" > credentials.json
-          ENV_VARS=$(jq -r 'to_entries[] | "\(.key)=\(.value)"' credentials.json | tr '\n
+          ENV_VARS=$(cat .env | sed 's/^/--env /' | tr '\n' ' ')
+          az containerapp update \
+            --name $TOOL_NAME \
+            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+            --image ${{ secrets.AZURE_CONTAINER_REGISTRY }}/$TOOL_NAME:latest \
+            $ENV_VARS
+
+      - name: Save Deployment URL as Artifact
+        run: |
+          ENDPOINT=$(az containerapp show --name $TOOL_NAME --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} --query properties.configuration.ingress.fqdn -o tsv)
+          mkdir -p artifacts
+          echo "https://$ENDPOINT" > artifacts/${TOOL_NAME}.txt
+        continue-on-error: true
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: deployed-url-${{ env.TOOL_NAME }}
+          path: artifacts/${{ env.TOOL_NAME }}.txt
