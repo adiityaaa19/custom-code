@@ -1,0 +1,52 @@
+name: Deploy Tool to Azure Container Apps
+
+on:
+  workflow_dispatch:
+    inputs:
+      tool_dir:
+        description: "Path to tool directory (e.g. tools/tool-id)"
+        required: true
+      credentials:
+        description: "JSON string of credentials to pass to container"
+        required: true
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    env:
+      TOOL_DIR: ${{ github.event.inputs.tool_dir }}
+      CREDENTIALS_JSON: ${{ github.event.inputs.credentials }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Determine tool name
+        id: metadata
+        run: |
+          TOOL_NAME=$(basename "$TOOL_DIR")
+          echo "TOOL_NAME=$TOOL_NAME" >> $GITHUB_ENV
+          echo "tool_name=$TOOL_NAME" >> $GITHUB_OUTPUT
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Build and Push Docker Image
+        run: |
+          # Parse credentials JSON into environment variables
+          echo "$CREDENTIALS_JSON" > credentials.json
+          ENV_VARS=$(jq -r 'to_entries[] | "--env \(.key)=\(.value)"' credentials.json | tr '\n' ' ')
+          
+          docker build -t ${{ secrets.AZURE_CONTAINER_REGISTRY }}/$TOOL_NAME:latest $TOOL_DIR
+          echo ${{ secrets.AZURE_ACR_PASSWORD }} | docker login ${{ secrets.AZURE_CONTAINER_REGISTRY }} -u ${{ secrets.AZURE_ACR_USERNAME }} --password-stdin
+          docker push ${{ secrets.AZURE_CONTAINER_REGISTRY }}/$TOOL_NAME:latest
+
+      - name: Deploy or Update Azure Container App
+        id: deploy
+        run: |
+          # Load credentials as environment variables
+          echo "$CREDENTIALS_JSON" > credentials.json
+          ENV_VARS=$(jq -r 'to_entries[] | "\(.key)=\(.value)"' credentials.json | tr '\n
