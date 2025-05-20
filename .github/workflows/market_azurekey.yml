@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tool_dir:
-        description: "Path to tool directory (e.g. tools/tool-id)"
+        description: "Path to tool directory (e.g. tools/user123/tool-xyz123/)"
         required: true
       credentials:
         description: "JSON string of credentials to pass to container"
@@ -22,11 +22,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Determine tool name
+      - name: Determine Python file and tool name
         id: metadata
         run: |
-          TOOL_NAME=$(basename "$TOOL_DIR")
+          cd "$TOOL_DIR"
+          PY_FILE=$(find . -maxdepth 1 -name '*.py' | head -n 1)
+          TOOL_NAME=$(basename "$PY_FILE" .py)
           echo "TOOL_NAME=$TOOL_NAME" >> $GITHUB_ENV
+          echo "PY_FILE=$PY_FILE" >> $GITHUB_ENV
           echo "tool_name=$TOOL_NAME" >> $GITHUB_OUTPUT
 
       - name: Azure Login
@@ -34,37 +37,56 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Parse credentials and prepare .env file
-        run: |
-          echo "$CREDENTIALS_JSON" | jq -r 'to_entries[] | "\(.key)=\(.value)"' > .env
-
-      - name: Build Docker Image
+      - name: Build and Push Docker Image
         run: |
           docker build -t ${{ secrets.AZURE_CONTAINER_REGISTRY }}/$TOOL_NAME:latest $TOOL_DIR
-
-      - name: Push Docker Image
-        run: |
           echo ${{ secrets.AZURE_ACR_PASSWORD }} | docker login ${{ secrets.AZURE_CONTAINER_REGISTRY }} -u ${{ secrets.AZURE_ACR_USERNAME }} --password-stdin
           docker push ${{ secrets.AZURE_CONTAINER_REGISTRY }}/$TOOL_NAME:latest
 
-      - name: Deploy to Azure Container Apps
+      - name: Parse credentials for deployment
         run: |
-          ENV_VARS=$(cat .env | sed 's/^/--env /' | tr '\n' ' ')
-          az containerapp update \
-            --name $TOOL_NAME \
-            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
-            --image ${{ secrets.AZURE_CONTAINER_REGISTRY }}/$TOOL_NAME:latest \
-            $ENV_VARS
+          echo "$CREDENTIALS_JSON" | jq -r 'to_entries[] | "--env \(.key)=\(.value)"' > env_args.txt
+          cat env_args.txt
 
-      - name: Save Deployment URL as Artifact
+      - name: Deploy or Update Azure Container App
+        id: deploy
         run: |
-          ENDPOINT=$(az containerapp show --name $TOOL_NAME --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} --query properties.configuration.ingress.fqdn -o tsv)
-          mkdir -p artifacts
-          echo "https://$ENDPOINT" > artifacts/${TOOL_NAME}.txt
-        continue-on-error: true
+          set -e
+          ENV_ARGS=$(cat env_args.txt | tr '\n' ' ')
+          EXISTING_APP=$(az containerapp show --name $TOOL_NAME --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} --query name -o tsv || echo "")
+          if [ -z "$EXISTING_APP" ]; then
+            az containerapp create \
+              --name $TOOL_NAME \
+              --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+              --image ${{ secrets.AZURE_CONTAINER_REGISTRY }}/$TOOL_NAME:latest \
+              --environment ${{ secrets.AZURE_CONTAINERAPPS_ENVIRONMENT }} \
+              --ingress external --target-port 80 \
+              --registry-server ${{ secrets.AZURE_CONTAINER_REGISTRY }} \
+              --registry-username ${{ secrets.AZURE_ACR_USERNAME }} \
+              --registry-password ${{ secrets.AZURE_ACR_PASSWORD }} \
+              $ENV_ARGS
+          else
+            az containerapp update \
+              --name $TOOL_NAME \
+              --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+              --image ${{ secrets.AZURE_CONTAINER_REGISTRY }}/$TOOL_NAME:latest \
+              $ENV_ARGS
+          fi
+          APP_URL=$(az containerapp show --name $TOOL_NAME --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} --query properties.configuration.ingress.fqdn -o tsv)
+          echo "DEPLOYED_URL=https://$APP_URL" >> $GITHUB_ENV
+          echo "DEPLOYED_URL=https://$APP_URL" >> $GITHUB_OUTPUT
+
+      - name: Write deployment info artifact
+        run: |
+          echo "tool_id=$TOOL_NAME" > $TOOL_NAME.txt
+          echo "tool_name=$TOOL_NAME" >> $TOOL_NAME.txt
+          echo "filepath=$TOOL_DIR" >> $TOOL_NAME.txt
+          echo "run_id=${{ github.run_id }}" >> $TOOL_NAME.txt
+          echo "status=success" >> $TOOL_NAME.txt
+          echo "endpoint=${{ steps.deploy.outputs.DEPLOYED_URL }}" >> $TOOL_NAME.txt
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: deployed-url-${{ env.TOOL_NAME }}
-          path: artifacts/${{ env.TOOL_NAME }}.txt
+          path: ${{ env.TOOL_NAME }}.txt
