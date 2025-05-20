@@ -22,15 +22,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Determine Python file and tool name
+      - name: Determine tool name from folder
         id: metadata
         run: |
-          cd "$TOOL_DIR"
-          PY_FILE=$(find . -maxdepth 1 -name '*.py' | head -n 1)
-          TOOL_NAME=$(basename "$PY_FILE" .py)
+          TOOL_NAME=$(basename "$TOOL_DIR")
           echo "TOOL_NAME=$TOOL_NAME" >> $GITHUB_ENV
-          echo "PY_FILE=$PY_FILE" >> $GITHUB_ENV
           echo "tool_name=$TOOL_NAME" >> $GITHUB_OUTPUT
+
 
       - name: Azure Login
         uses: azure/login@v1
