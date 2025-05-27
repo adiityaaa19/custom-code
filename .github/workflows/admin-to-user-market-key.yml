@@ -60,6 +60,17 @@ jobs:
               --image ${{ secrets.AZURE_CONTAINER_REGISTRY }}/$DEPLOYMENT_ID:latest \
               --environment ${{ secrets.AZURE_CONTAINERAPPS_ENVIRONMENT }} \
               --ingress external --target-port 8000 \
+              --startup-probe-interval 10 \
+              --startup-probe-timeout 5 \
+              --startup-probe-period 30 \
+              --startup-probe-path /health \
+              --liveness-probe-interval 10 \
+              --liveness-probe-path /health
+          else
+            az containerapp update \
+              # ... other args ...
+              --startup-probe-interval=10 \
+              --startup-probe-path=/health
               --registry-server ${{ secrets.AZURE_CONTAINER_REGISTRY }} \
               --registry-username ${{ secrets.AZURE_ACR_USERNAME }} \
               --registry-password ${{ secrets.AZURE_ACR_PASSWORD }} \
