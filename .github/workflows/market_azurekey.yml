@@ -58,7 +58,7 @@ jobs:
               --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
               --image ${{ secrets.AZURE_CONTAINER_REGISTRY }}/$TOOL_NAME:latest \
               --environment ${{ secrets.AZURE_CONTAINERAPPS_ENVIRONMENT }} \
-              --ingress external --target-port 8000 \
+              --ingress external --target-port 80 \
               --registry-server ${{ secrets.AZURE_CONTAINER_REGISTRY }} \
               --registry-username ${{ secrets.AZURE_ACR_USERNAME }} \
               --registry-password ${{ secrets.AZURE_ACR_PASSWORD }} \
