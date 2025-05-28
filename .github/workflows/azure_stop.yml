@@ -7,10 +7,6 @@ on:
         description: 'Name of the Container App to stop'
         required: true
         type: string
-      resource_group:
-        description: 'Azure Resource Group'
-        required: true
-        type: string
       subscription_id:
         description: 'Azure Subscription ID'
         required: true
@@ -36,10 +32,10 @@ jobs:
           set +e
           revisions=$(az containerapp revision list \
             --name "${{ github.event.inputs.container_app_name }}" \
-            --resource-group "${{ github.event.inputs.resource_group }}" \
+            --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
             --query "[?properties.active].name" \
             -o tsv)
-          
+
           echo "Found revisions: $revisions"
           echo "revisions=$revisions" >> $GITHUB_OUTPUT
           echo "$revisions" > revisions.txt
@@ -51,7 +47,7 @@ jobs:
             echo "Deactivating revision: $rev"
             az containerapp revision deactivate \
               --name "${{ github.event.inputs.container_app_name }}" \
-              --resource-group "${{ github.event.inputs.resource_group }}" \
+              --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
               --revision "$rev" > deactivate_$rev.log 2>&1
             STATUS=$?
             if [ $STATUS -ne 0 ]; then
