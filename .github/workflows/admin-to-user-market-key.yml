@@ -1,4 +1,3 @@
-
 name: Deploy Tool to Azure Container Apps
 
 on:
@@ -27,6 +26,24 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
+      - name: Validate deployment ID format
+        run: |
+          if ! [[ "$DEPLOYMENT_ID" =~ ^[a-z0-9-]{1,32}$ ]]; then
+            echo "::error::Invalid deployment_id format. Must be lowercase alphanumeric with hyphens, max 32 chars."
+            exit 1
+          fi
+
+      - name: Verify tool directory exists
+        run: |
+          if [ ! -d "$TOOL_DIR" ]; then
+            echo "::error::Tool directory '$TOOL_DIR' not found"
+            exit 1
+          fi
+          if [ ! -f "$TOOL_DIR/Dockerfile" ]; then
+            echo "::error::Dockerfile not found in $TOOL_DIR"
+            exit 1
+          fi
+
       - name: Set deployment metadata
         id: metadata
         run: |
@@ -40,8 +57,21 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
+      - name: Validate and parse credentials JSON
+        id: validate-credentials
+        run: |
+          echo "Validating credentials JSON..."
+          echo "$CREDENTIALS_JSON" > credentials.json
+          if ! jq empty credentials.json; then
+            echo "::error::Invalid JSON in credentials"
+            exit 1
+          fi
+          ENV_VARS=$(jq -r 'to_entries[] | "\(.key)=\(.value)"' credentials.json | paste -sd " " -)
+          echo "ENV_VARS=${ENV_VARS}" >> $GITHUB_ENV
+
       - name: Build and Push Docker Image
         run: |
+          echo "Building Docker image from $TOOL_DIR..."
           docker build -t ${{ secrets.AZURE_CONTAINER_REGISTRY }}/$DEPLOYMENT_ID:latest $TOOL_DIR
           echo ${{ secrets.AZURE_ACR_PASSWORD }} | docker login ${{ secrets.AZURE_CONTAINER_REGISTRY }} -u ${{ secrets.AZURE_ACR_USERNAME }} --password-stdin
           docker push ${{ secrets.AZURE_CONTAINER_REGISTRY }}/$DEPLOYMENT_ID:latest
@@ -50,11 +80,11 @@ jobs:
         id: deploy
         run: |
           set -e
-          echo "$CREDENTIALS_JSON" > credentials.json
-          ENV_VARS=$(jq -r 'to_entries[] | "\(.key)=\(.value)"' credentials.json | paste -sd " " -)
+          echo "Checking for existing container app..."
           EXISTING_APP=$(az containerapp show --name $DEPLOYMENT_ID --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} --query name -o tsv || echo "")
 
           if [ -z "$EXISTING_APP" ]; then
+            echo "Creating new container app..."
             az containerapp create \
               --name $DEPLOYMENT_ID \
               --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
@@ -66,6 +96,7 @@ jobs:
               --registry-password ${{ secrets.AZURE_ACR_PASSWORD }} \
               --env-vars $ENV_VARS
           else
+            echo "Updating existing container app..."
             az containerapp update \
               --name $DEPLOYMENT_ID \
               --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
@@ -73,9 +104,28 @@ jobs:
               --set-env-vars $ENV_VARS
           fi
 
+          echo "Retrieving application URL..."
           APP_URL=$(az containerapp show --name $DEPLOYMENT_ID --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} --query properties.configuration.ingress.fqdn -o tsv)
           echo "DEPLOYED_URL=https://$APP_URL" >> $GITHUB_ENV
           echo "DEPLOYED_URL=https://$APP_URL" >> $GITHUB_OUTPUT
+
+          # Wait for app to be ready (poll endpoint)
+          echo "Waiting for app to be ready at https://$APP_URL"
+          for i in {1..10}; do
+            HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://$APP_URL || echo "000")
+            if [ "$HTTP_STATUS" = "200" ]; then
+              echo "App is ready!"
+              break
+            else
+              echo "Attempt $i: App not ready yet (status $HTTP_STATUS), waiting 10 seconds..."
+              sleep 10
+            fi
+          done
+
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "::error::App did not become ready in time."
+            exit 1
+          fi
 
       - name: Write deployment info artifact
         run: |
@@ -84,6 +134,7 @@ jobs:
           echo "run_id=${{ github.run_id }}" >> $DEPLOYMENT_ID.txt
           echo "status=success" >> $DEPLOYMENT_ID.txt
           echo "endpoint=${{ steps.deploy.outputs.DEPLOYED_URL }}" >> $DEPLOYMENT_ID.txt
+          echo "timestamp=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $DEPLOYMENT_ID.txt
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4.6.2
