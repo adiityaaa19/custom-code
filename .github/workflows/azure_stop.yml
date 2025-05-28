@@ -19,6 +19,8 @@ on:
 jobs:
   stop:
     runs-on: ubuntu-latest
+    outputs:
+      revisions: ${{ steps.get_revisions.outputs.revisions }}
     steps:
       - name: Checkout (optional)
         uses: actions/checkout@v3
@@ -32,29 +34,20 @@ jobs:
         id: get_revisions
         run: |
           set +e
-          # Get all active revisions
           revisions=$(az containerapp revision list \
             --name "${{ github.event.inputs.container_app_name }}" \
             --resource-group "${{ github.event.inputs.resource_group }}" \
             --query "[?properties.active].name" \
             -o tsv)
           
-          if [ -z "$revisions" ]; then
-            echo "No active revisions found - app may already be stopped"
-            echo "REVISIONS=" >> $GITHUB_ENV
-            echo "status=success" >> $GITHUB_OUTPUT
-          else
-            echo "Found active revisions: $revisions"
-            echo "REVISIONS=$revisions" >> $GITHUB_ENV
-            echo "status=pending" >> $GITHUB_OUTPUT
-          fi
+          echo "Found revisions: $revisions"
+          echo "revisions=$revisions" >> $GITHUB_OUTPUT
           echo "$revisions" > revisions.txt
 
       - name: Deactivate Revisions
-        if: env.REVISIONS != ''
+        if: steps.get_revisions.outputs.revisions != ''
         run: |
-          set +e
-          for rev in $REVISIONS; do
+          for rev in ${{ steps.get_revisions.outputs.revisions }}; do
             echo "Deactivating revision: $rev"
             az containerapp revision deactivate \
               --name "${{ github.event.inputs.container_app_name }}" \
@@ -71,25 +64,35 @@ jobs:
           echo "success" > result.txt
 
       - name: Handle Already Stopped Case
-        if: env.REVISIONS == ''
+        if: steps.get_revisions.outputs.revisions == ''
         run: |
           echo "App was already stopped - no revisions to deactivate"
           echo "success" > result.txt
 
+      - name: Ensure result.txt exists
+        if: always()
+        run: |
+          if [ ! -f result.txt ]; then
+            echo "Result file missing, writing unknown status."
+            echo "unknown" > result.txt
+          fi
+
       - name: Upload Result Artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: stop-result-${{ github.event.inputs.container_app_name }}
           path: result.txt
 
       - name: Upload Revision List
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: stop-revisions-${{ github.event.inputs.container_app_name }}
           path: revisions.txt
 
       - name: Upload Deactivation Logs
-        if: env.REVISIONS != ''
+        if: steps.get_revisions.outputs.revisions != ''
         uses: actions/upload-artifact@v4
         with:
           name: stop-logs-${{ github.event.inputs.container_app_name }}
