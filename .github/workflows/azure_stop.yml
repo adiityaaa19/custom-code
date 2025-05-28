@@ -34,18 +34,8 @@ jobs:
             --name "${{ github.event.inputs.container_app_name }}" \
             --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
             --query "[?properties.active].name" \
-            -o tsv 2>error.log)
-          STATUS=$?
-      
-          if [ $STATUS -ne 0 ]; then
-            echo "App not found or error occurred"
-            cat error.log
-            echo "app not found" > result.txt
-            echo "" > revisions.txt
-            echo "revisions=" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-      
+            -o tsv)
+
           echo "Found revisions: $revisions"
           echo "revisions=$revisions" >> $GITHUB_OUTPUT
           echo "$revisions" > revisions.txt
