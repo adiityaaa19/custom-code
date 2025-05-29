@@ -392,6 +392,29 @@ jobs:
           EOF
           fi
 
+      - name: Verify Restart Success
+        if: steps.check_app.outputs.app_exists == 'true'
+        run: |
+          echo "Verifying restart success..."
+          sleep 15
+          
+          # Check current status
+          final_status=$(az containerapp show \
+            --name "${{ github.event.inputs.container_app_name }}" \
+            --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
+            --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
+            --query "{provisioningState: properties.provisioningState, runningStatus: properties.runningStatus, latestRevision: properties.latestRevisionName}" \
+            -o json)
+          
+          echo "Final container app status:"
+          echo "$final_status" | jq '.'
+          
+          # Update result with final status
+          if [ -f result.json ]; then
+            current_result=$(cat result.json)
+            echo "$current_result" | jq --argjson final_status "$final_status" '. + {"final_app_status": $final_status}' > result.json
+          fi
+
       - name: Set Final Status
         id: final_status
         if: always()
