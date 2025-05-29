@@ -1,0 +1,90 @@
+name: Stop Azure Container App
+
+on:
+  workflow_dispatch:
+    inputs:
+      container_app_name:
+        description: 'Name of the Container App to stop'
+        required: true
+        type: string
+      subscription_id:
+        description: 'Azure Subscription ID'
+        required: true
+        type: string
+
+jobs:
+  stop:
+    runs-on: ubuntu-latest
+    outputs:
+      result: ${{ steps.final_result.outputs.result }}
+      message: ${{ steps.final_result.outputs.message }}
+      
+    steps:
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Validate Container App
+        id: validate_app
+        run: |
+          set +e
+          # Check if app exists
+          az containerapp show \
+            --name "${{ inputs.container_app_name }}" \
+            --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
+            --output none > error.log 2>&1
+          
+          if [ $? -ne 0 ]; then
+            error_msg=$(grep -oP '(?<=ERROR: ).*' error.log || cat error.log)
+            echo "::error::$error_msg"
+            echo "result=error" >> $GITHUB_OUTPUT
+            echo "message=Container app not found: $error_msg" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+      - name: Get Active Revisions
+        id: get_revisions
+        if: steps.validate_app.outputs.result != 'error'
+        run: |
+          revisions=$(az containerapp revision list \
+            --name "${{ inputs.container_app_name }}" \
+            --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
+            --query "[?properties.active].name" \
+            -o tsv)
+          
+          echo "revisions=$(echo $revisions | tr '\n' ',')" >> $GITHUB_OUTPUT
+          echo "$revisions" > revisions.txt
+
+      - name: Deactivate Revisions
+        id: deactivate
+        if: steps.get_revisions.outputs.revisions != ''
+        run: |
+          for rev in ${{ steps.get_revisions.outputs.revisions }}; do
+            echo "Deactivating revision: $rev"
+            az containerapp revision deactivate \
+              --name "${{ inputs.container_app_name }}" \
+              --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
+              --revision "$rev" || exit 1
+          done
+
+      - name: Set Final Result
+        id: final_result
+        run: |
+          if [ "${{ steps.validate_app.outputs.result }}" = "error" ]; then
+            # Keep existing error message
+            result="error"
+            message="${{ steps.validate_app.outputs.message }}"
+          elif [ -z "${{ steps.get_revisions.outputs.revisions }}" ]; then
+            result="success"
+            message="App was already stopped"
+          elif [ "${{ job.status }}" = "success" ]; then
+            result="success"
+            message="Successfully deactivated revisions"
+          else
+            result="failure"
+            message="Unknown error occurred"
+          fi
+          
+          echo "result=$result" >> $GITHUB_OUTPUT
+          echo "message=$message" >> $GITHUB_OUTPUT
