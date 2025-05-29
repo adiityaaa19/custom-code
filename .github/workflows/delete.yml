@@ -28,6 +28,8 @@ jobs:
             "status": "running",
             "container_app_name": "${{ inputs.container_app_name }}",
             "operation": "delete",
+            "resource_group": "${{ secrets.AZURE_RESOURCE_GROUP }}",
+            "deleted_at": null,
             "error": null,
             "message": "Starting container app deletion process"
           }
@@ -61,6 +63,8 @@ jobs:
             "status": "failed",
             "container_app_name": "$APP_NAME",
             "operation": "delete",
+            "resource_group": "$RESOURCE_GROUP",
+            "deleted_at": null,
             "error": "Container app not found",
             "message": "Container app '$APP_NAME' does not exist in resource group '$RESOURCE_GROUP'"
           }
@@ -76,6 +80,7 @@ jobs:
             "container_app_name": "$APP_NAME",
             "operation": "delete",
             "resource_group": "$RESOURCE_GROUP",
+            "deleted_at": null,
             "error": null,
             "message": "Container app found, proceeding with deletion"
           }
@@ -124,34 +129,12 @@ jobs:
             "container_app_name": "$APP_NAME",
             "operation": "delete",
             "resource_group": "$RESOURCE_GROUP",
+            "deleted_at": null,
             "error": "Failed to delete container app",
             "message": "Deletion failed: $delete_output"
           }
           EOF
           fi
-
-      - name: Create metadata JSON
-        if: always()
-        run: |
-          APP_NAME="${{ inputs.container_app_name }}"
-          RESOURCE_GROUP="${{ secrets.AZURE_RESOURCE_GROUP }}"
-          
-          # Get status from result.json
-          STATUS=$(jq -r '.status' output/result.json 2>/dev/null || echo "unknown")
-          
-          cat > output/tool-${APP_NAME}.json << EOF
-          {
-            "tool-id": "${APP_NAME}",
-            "name": "$APP_NAME",
-            "resource-group": "$RESOURCE_GROUP",
-            "container-app-name": "$APP_NAME",
-            "sha": "${{ github.sha }}",
-            "run-id": "${{ github.run_id }}",
-            "status": "$STATUS",
-            "operation": "delete",
-            "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          }
-          EOF
 
       - name: Display Results
         if: always()
@@ -160,22 +143,10 @@ jobs:
           if [ -f output/result.json ]; then
             cat output/result.json | jq . || cat output/result.json
           fi
-          
-          echo "=== Metadata ==="
-          if [ -f output/tool-${{ inputs.container_app_name }}.json ]; then
-            cat output/tool-${{ inputs.container_app_name }}.json | jq . || cat output/tool-${{ inputs.container_app_name }}.json
-          fi
 
       - name: Upload result artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: delete-result-${{ inputs.container_app_name }}
+          name: result
           path: output/result.json
-
-      - name: Upload metadata artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: tool-${{ inputs.container_app_name }}
-          path: output/tool-${{ inputs.container_app_name }}.json
