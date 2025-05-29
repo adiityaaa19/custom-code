@@ -1,9 +1,4 @@
-
-
-
-
-
-    name: Restart Azure Container App
+name: Restart Azure Container App
 
 on:
   workflow_dispatch:
