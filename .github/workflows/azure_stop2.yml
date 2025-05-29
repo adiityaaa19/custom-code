@@ -16,8 +16,8 @@ jobs:
   stop:
     runs-on: ubuntu-latest
     outputs:
-      revisions: ${{ steps.get_revisions.outputs.revisions }}
-      result: ${{ steps.set_result.outputs.result }}
+      run_id: ${{ github.run_id }}
+      status: ${{ steps.final_status.outputs.status }}
     steps:
       - name: Checkout (optional)
         uses: actions/checkout@v3
@@ -27,122 +27,232 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Validate Container App Exists
-        id: validate_app
+      - name: Initialize Result JSON
+        run: |
+          cat > result.json << 'EOF'
+          {
+            "run_id": "${{ github.run_id }}",
+            "status": "running",
+            "container_app_name": "${{ github.event.inputs.container_app_name }}",
+            "revisions": [],
+            "error": null,
+            "message": "Starting container app stop process"
+          }
+          EOF
+
+      - name: Check Container App Exists
+        id: check_app
         run: |
           set +e
-          echo "Checking if container app '${{ github.event.inputs.container_app_name }}' exists..."
+          echo "Checking if container app exists..."
           
-          # Check if the container app exists
-          app_info=$(az containerapp show \
+          app_check=$(az containerapp show \
             --name "${{ github.event.inputs.container_app_name }}" \
             --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
+            --subscription "${{ github.event.inputs.subscription_id }}" \
             --query "name" \
             -o tsv 2>&1)
           
-          if [[ $? -ne 0 ]]; then
-            if [[ "$app_info" == *"ResourceNotFound"* ]] || [[ "$app_info" == *"was not found"* ]]; then
-              echo "error_type=not_found" >> $GITHUB_OUTPUT
-              echo "Container app '${{ github.event.inputs.container_app_name }}' not found" > result.txt
-              echo "failure" >> result.txt
-              exit 1
-            else
-              echo "error_type=unknown" >> $GITHUB_OUTPUT
-              echo "Error checking container app: $app_info" > result.txt
-              echo "failure" >> result.txt
-              exit 1
-            fi
-          fi
+          EXIT_CODE=$?
           
-          echo "Container app found: $app_info"
-          echo "app_exists=true" >> $GITHUB_OUTPUT
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "Container app not found or error occurred"
+            echo "app_exists=false" >> $GITHUB_OUTPUT
+            echo "error_message=Container app '${{ github.event.inputs.container_app_name }}' not found in resource group '${{ secrets.AZURE_RESOURCE_GROUP }}'" >> $GITHUB_OUTPUT
+            
+            # Update result.json with error
+            cat > result.json << EOF
+          {
+            "run_id": "${{ github.run_id }}",
+            "status": "failed",
+            "container_app_name": "${{ github.event.inputs.container_app_name }}",
+            "revisions": [],
+            "error": "Container app '${{ github.event.inputs.container_app_name }}' not found in resource group '${{ secrets.AZURE_RESOURCE_GROUP }}'",
+            "message": "Container app does not exist"
+          }
+          EOF
+          else
+            echo "Container app found: $app_check"
+            echo "app_exists=true" >> $GITHUB_OUTPUT
+          fi
 
       - name: Get Active Revisions
         id: get_revisions
-        if: steps.validate_app.outputs.app_exists == 'true'
+        if: steps.check_app.outputs.app_exists == 'true'
         run: |
           set +e
-          echo "Getting active revisions for '${{ github.event.inputs.container_app_name }}'..."
+          echo "Getting active revisions..."
           
           revisions=$(az containerapp revision list \
             --name "${{ github.event.inputs.container_app_name }}" \
             --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
+            --subscription "${{ github.event.inputs.subscription_id }}" \
             --query "[?properties.active].name" \
             -o tsv 2>&1)
+
+          EXIT_CODE=$?
           
-          if [[ $? -ne 0 ]]; then
-            echo "Error getting revisions: $revisions"
-            echo "Error retrieving active revisions" > result.txt
-            echo "failure" >> result.txt
-            exit 1
-          fi
-          
-          echo "Found revisions: $revisions"
-          echo "revisions=$revisions" >> $GITHUB_OUTPUT
-          echo "$revisions" > revisions.txt
-          
-          # Count revisions for logging
-          if [[ -z "$revisions" ]]; then
-            echo "revision_count=0" >> $GITHUB_OUTPUT
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "Failed to get revisions: $revisions"
+            echo "revisions_found=false" >> $GITHUB_OUTPUT
+            echo "error_message=Failed to retrieve revisions: $revisions" >> $GITHUB_OUTPUT
+            
+            # Update result.json with error
+            cat > result.json << EOF
+          {
+            "run_id": "${{ github.run_id }}",
+            "status": "failed",
+            "container_app_name": "${{ github.event.inputs.container_app_name }}",
+            "revisions": [],
+            "error": "Failed to retrieve revisions: $revisions",
+            "message": "Error getting active revisions"
+          }
+          EOF
           else
-            revision_count=$(echo "$revisions" | wc -w)
-            echo "revision_count=$revision_count" >> $GITHUB_OUTPUT
-            echo "Found $revision_count active revision(s)"
+            echo "Found revisions: $revisions"
+            echo "revisions_found=true" >> $GITHUB_OUTPUT
+            echo "revisions=$revisions" >> $GITHUB_OUTPUT
+            
+            # Convert revisions to JSON array format
+            if [ -z "$revisions" ]; then
+              revision_array="[]"
+              message="No active revisions found - container app is already stopped"
+            else
+              revision_array=$(echo "$revisions" | jq -R -s 'split("\n") | map(select(length > 0))')
+              message="Found active revisions to deactivate"
+            fi
+            
+            # Update result.json
+            cat > result.json << EOF
+          {
+            "run_id": "${{ github.run_id }}",
+            "status": "processing",
+            "container_app_name": "${{ github.event.inputs.container_app_name }}",
+            "revisions": $revision_array,
+            "error": null,
+            "message": "$message"
+          }
+          EOF
           fi
 
       - name: Deactivate Revisions
         id: deactivate
-        if: steps.get_revisions.outputs.revisions != '' && steps.get_revisions.outputs.revision_count != '0'
+        if: steps.check_app.outputs.app_exists == 'true' && steps.get_revisions.outputs.revisions_found == 'true' && steps.get_revisions.outputs.revisions != ''
         run: |
-          echo "Deactivating revisions for '${{ github.event.inputs.container_app_name }}'..."
+          set +e
           success_count=0
-          total_count=0
+          failure_count=0
+          failed_revisions=()
+          deactivated_revisions=()
           
           for rev in ${{ steps.get_revisions.outputs.revisions }}; do
-            total_count=$((total_count + 1))
-            echo "Deactivating revision $total_count: $rev"
+            echo "Deactivating revision: $rev"
             
-            if az containerapp revision deactivate \
+            deactivate_output=$(az containerapp revision deactivate \
               --name "${{ github.event.inputs.container_app_name }}" \
               --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
-              --revision "$rev" > "deactivate_$rev.log" 2>&1; then
+              --subscription "${{ github.event.inputs.subscription_id }}" \
+              --revision "$rev" 2>&1)
+            
+            STATUS=$?
+            echo "$deactivate_output" > "deactivate_${rev}.log"
+            
+            if [ $STATUS -eq 0 ]; then
               echo "✅ Successfully deactivated revision: $rev"
-              success_count=$((success_count + 1))
+              ((success_count++))
+              deactivated_revisions+=("$rev")
             else
               echo "❌ Failed to deactivate revision: $rev"
-              cat "deactivate_$rev.log"
-              echo "Failed to deactivate revision $rev" > result.txt
-              echo "failure" >> result.txt
-              exit 1
+              echo "Error: $deactivate_output"
+              ((failure_count++))
+              failed_revisions+=("$rev")
             fi
           done
           
-          echo "Successfully deactivated $success_count/$total_count revisions"
-          echo "Container app stopped successfully" > result.txt
-          echo "success" >> result.txt
+          # Create detailed result
+          total_revisions=$(echo "${{ steps.get_revisions.outputs.revisions }}" | wc -w)
+          
+          if [ $failure_count -eq 0 ]; then
+            final_status="success"
+            message="Successfully deactivated all $success_count revisions"
+            error_msg="null"
+          else
+            final_status="partial_failure"
+            message="Deactivated $success_count out of $total_revisions revisions. $failure_count failed."
+            error_msg="Failed to deactivate revisions: ${failed_revisions[*]}"
+          fi
+          
+          # Get final revision list as JSON array
+          if [ ${#deactivated_revisions[@]} -eq 0 ]; then
+            deactivated_array="[]"
+          else
+            deactivated_array=$(printf '%s\n' "${deactivated_revisions[@]}" | jq -R -s 'split("\n") | map(select(length > 0))')
+          fi
+          
+          # Update result.json
+          cat > result.json << EOF
+          {
+            "run_id": "${{ github.run_id }}",
+            "status": "$final_status",
+            "container_app_name": "${{ github.event.inputs.container_app_name }}",
+            "revisions": $deactivated_array,
+            "total_revisions": $total_revisions,
+            "success_count": $success_count,
+            "failure_count": $failure_count,
+            "error": $error_msg,
+            "message": "$message"
+          }
+          EOF
+          
+          echo "deactivation_status=$final_status" >> $GITHUB_OUTPUT
 
       - name: Handle Already Stopped Case
-        if: steps.get_revisions.outputs.revisions == '' || steps.get_revisions.outputs.revision_count == '0'
+        if: steps.check_app.outputs.app_exists == 'true' && steps.get_revisions.outputs.revisions_found == 'true' && steps.get_revisions.outputs.revisions == ''
         run: |
-          echo "Container app '${{ github.event.inputs.container_app_name }}' has no active revisions - already stopped"
-          echo "Container app was already stopped" > result.txt
-          echo "success" >> result.txt
+          echo "Container app is already stopped - no active revisions found"
+          
+          cat > result.json << 'EOF'
+          {
+            "run_id": "${{ github.run_id }}",
+            "status": "success",
+            "container_app_name": "${{ github.event.inputs.container_app_name }}",
+            "revisions": [],
+            "error": null,
+            "message": "Container app was already stopped - no active revisions to deactivate"
+          }
+          EOF
 
-      - name: Set Final Result
-        id: set_result
+      - name: Set Final Status
+        id: final_status
         if: always()
         run: |
-          if [ -f result.txt ]; then
-            result_content=$(cat result.txt)
-            echo "result<<EOF" >> $GITHUB_OUTPUT
-            echo "$result_content" >> $GITHUB_OUTPUT
-            echo "EOF" >> $GITHUB_OUTPUT
-            echo "Final result: $result_content"
+          if [ -f result.json ]; then
+            status=$(jq -r '.status' result.json)
+            echo "Final workflow status: $status"
+            echo "status=$status" >> $GITHUB_OUTPUT
           else
-            echo "No result file found - operation status unknown"
-            echo "Operation completed but status unknown" > result.txt
-            echo "unknown" >> result.txt
-            echo "result=Operation completed but status unknown" >> $GITHUB_OUTPUT
+            echo "No result.json found, creating error result"
+            cat > result.json << 'EOF'
+          {
+            "run_id": "${{ github.run_id }}",
+            "status": "failed",
+            "container_app_name": "${{ github.event.inputs.container_app_name }}",
+            "revisions": [],
+            "error": "Workflow completed but no result was generated",
+            "message": "Unknown error occurred during processing"
+          }
+          EOF
+            echo "status=failed" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Display Final Result
+        if: always()
+        run: |
+          echo "=== Final Result ==="
+          if [ -f result.json ]; then
+            cat result.json | jq '.'
+          else
+            echo "No result.json file found"
           fi
 
       - name: Upload Result Artifact
@@ -150,21 +260,27 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: stop-result-${{ github.event.inputs.container_app_name }}
-          path: result.txt
-          retention-days: 1  # Reduce retention to clean up faster
-
-      - name: Upload Revision List
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: stop-revisions-${{ github.event.inputs.container_app_name }}
-          path: revisions.txt
-          retention-days: 1
+          path: result.json
 
       - name: Upload Deactivation Logs
-        if: steps.get_revisions.outputs.revisions != '' && steps.get_revisions.outputs.revision_count != '0'
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: stop-logs-${{ github.event.inputs.container_app_name }}
           path: deactivate_*.log
-          retention-days: 1
+
+      - name: Create Summary Artifact
+        if: always()
+        run: |
+          if [ -f result.json ]; then
+            cp result.json summary.json
+          else
+            echo '{"error": "No result generated"}' > summary.json
+          fi
+
+      - name: Upload Summary Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stop-summary-${{ github.event.inputs.container_app_name }}
+          path: summary.json
