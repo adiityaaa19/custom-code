@@ -1,25 +1,30 @@
-name: Start Azure Container App with Fresh Replicas
+name: Restart Azure Container App
 
 on:
   workflow_dispatch:
     inputs:
       container_app_name:
-        description: 'Name of the Container App to start'
+        description: 'Name of the Container App to restart'
         required: true
         type: string
-      revision_name:
-        description: 'Optional: Specific revision to activate. If not provided, will create fresh replicas.'
+      restart_method:
+        description: 'Restart method'
         required: false
-        type: string
+        default: 'create_revision'
+        type: choice
+        options:
+          - 'create_revision'
+          - 'update_replicas'
+          - 'force_restart'
 
 jobs:
-  start:
+  restart:
     runs-on: ubuntu-latest
     outputs:
       run_id: ${{ github.run_id }}
       status: ${{ steps.final_status.outputs.status }}
     steps:
-      - name: Checkout (optional)
+      - name: Checkout
         uses: actions/checkout@v3
 
       - name: Azure Login
@@ -29,15 +34,15 @@ jobs:
 
       - name: Initialize Result JSON
         run: |
-          cat > result.json << EOF
+          cat > result.json << 'EOF'
           {
             "run_id": "${{ github.run_id }}",
             "status": "running",
             "container_app_name": "${{ github.event.inputs.container_app_name }}",
-            "revision": null,
-            "activation_method": "",
+            "restart_method": "${{ github.event.inputs.restart_method }}",
+            "revisions": [],
             "error": null,
-            "message": "Starting container app activation process"
+            "message": "Starting container app restart process"
           }
           EOF
 
@@ -45,119 +50,358 @@ jobs:
         id: check_app
         run: |
           set +e
-          app_check=$(az containerapp show \
+          echo "Checking if container app exists..."
+          
+          app_info=$(az containerapp show \
             --name "${{ github.event.inputs.container_app_name }}" \
             --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
             --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
-            --query "name" \
+            --query "{name: name, provisioningState: properties.provisioningState, runningStatus: properties.runningStatus}" \
+            -o json 2>&1)
+          
+          EXIT_CODE=$?
+          
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "Container app not found or error occurred"
+            echo "app_exists=false" >> $GITHUB_OUTPUT
+            echo "error_message=Container app '${{ github.event.inputs.container_app_name }}' not found" >> $GITHUB_OUTPUT
+            
+            cat > result.json << EOF
+          {
+            "run_id": "${{ github.run_id }}",
+            "status": "failed",
+            "container_app_name": "${{ github.event.inputs.container_app_name }}",
+            "restart_method": "${{ github.event.inputs.restart_method }}",
+            "revisions": [],
+            "error": "Container app not found",
+            "message": "Container app '${{ github.event.inputs.container_app_name }}' does not exist"
+          }
+          EOF
+          else
+            echo "Container app found"
+            echo "app_exists=true" >> $GITHUB_OUTPUT
+            echo "app_info=$app_info" >> $GITHUB_OUTPUT
+            
+            # Parse app info
+            provisioning_state=$(echo "$app_info" | jq -r '.provisioningState // "Unknown"')
+            running_status=$(echo "$app_info" | jq -r '.runningStatus // "Unknown"')
+            
+            echo "provisioning_state=$provisioning_state" >> $GITHUB_OUTPUT
+            echo "running_status=$running_status" >> $GITHUB_OUTPUT
+            
+            cat > result.json << EOF
+          {
+            "run_id": "${{ github.run_id }}",
+            "status": "processing",
+            "container_app_name": "${{ github.event.inputs.container_app_name }}",
+            "restart_method": "${{ github.event.inputs.restart_method }}",
+            "app_status": {
+              "provisioning_state": "$provisioning_state",
+              "running_status": "$running_status"
+            },
+            "revisions": [],
+            "error": null,
+            "message": "Container app found, proceeding with restart"
+          }
+          EOF
+          fi
+
+      - name: Get Current Revisions
+        id: get_revisions
+        if: steps.check_app.outputs.app_exists == 'true'
+        run: |
+          set +e
+          echo "Getting current revisions..."
+          
+          # Get all revisions with their status
+          all_revisions=$(az containerapp revision list \
+            --name "${{ github.event.inputs.container_app_name }}" \
+            --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
+            --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
+            --query "[].{name: name, active: properties.active, createdTime: properties.createdTime, replicas: properties.replicas}" \
+            -o json 2>&1)
+
+          EXIT_CODE=$?
+          
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "Failed to get revisions: $all_revisions"
+            echo "revisions_retrieved=false" >> $GITHUB_OUTPUT
+          else
+            echo "Retrieved revisions successfully"
+            echo "revisions_retrieved=true" >> $GITHUB_OUTPUT
+            
+            # Count active and inactive revisions
+            active_count=$(echo "$all_revisions" | jq '[.[] | select(.active == true)] | length')
+            inactive_count=$(echo "$all_revisions" | jq '[.[] | select(.active == false)] | length')
+            total_count=$(echo "$all_revisions" | jq 'length')
+            
+            echo "active_revisions=$active_count" >> $GITHUB_OUTPUT
+            echo "inactive_revisions=$inactive_count" >> $GITHUB_OUTPUT
+            echo "total_revisions=$total_count" >> $GITHUB_OUTPUT
+            
+            # Get active revision names
+            active_revision_names=$(echo "$all_revisions" | jq -r '[.[] | select(.active == true).name] | join(" ")')
+            echo "active_revision_names=$active_revision_names" >> $GITHUB_OUTPUT
+            
+            echo "Active revisions: $active_count, Inactive: $inactive_count, Total: $total_count"
+          fi
+
+      - name: Method 1 - Create New Revision (Recommended)
+        id: create_revision
+        if: steps.check_app.outputs.app_exists == 'true' && github.event.inputs.restart_method == 'create_revision'
+        run: |
+          set +e
+          echo "Creating new revision to restart the container app..."
+          
+          # Get current container app configuration
+          current_config=$(az containerapp show \
+            --name "${{ github.event.inputs.container_app_name }}" \
+            --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
+            --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
+            --query "properties.template" \
+            -o json)
+          
+          # Create a new revision by updating with a timestamp annotation
+          timestamp=$(date +%s)
+          
+          update_result=$(az containerapp update \
+            --name "${{ github.event.inputs.container_app_name }}" \
+            --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
+            --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
+            --set-env-vars "RESTART_TIMESTAMP=$timestamp" \
+            --query "properties.latestRevisionName" \
             -o tsv 2>&1)
           
           EXIT_CODE=$?
-          if [ $EXIT_CODE -ne 0 ]; then
-            echo "::error::Container app not found"
-            echo "status=failed" >> $GITHUB_OUTPUT
-            jq --arg error "Container app '${{ github.event.inputs.container_app_name }}' not found" \
-              '.status = "failed" | .error = $error | .message = "Container app does not exist"' \
-              result.json > tmp.json && mv tmp.json result.json
-            exit 1
-          else
-            echo "status=success" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Try to Activate Existing Revision (if specified)
-        id: activate_existing
-        if: github.event.inputs.revision_name != ''
-        run: |
-          set +e
-          revision="${{ github.event.inputs.revision_name }}"
           
-          echo "Attempting to activate specified revision: $revision"
-          activate_output=$(az containerapp revision activate \
-            --name "${{ github.event.inputs.container_app_name }}" \
-            --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
-            --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
-            --revision "$revision" 2>&1)
-          
-          EXIT_CODE=$?
           if [ $EXIT_CODE -eq 0 ]; then
-            echo "Activation successful!"
-            echo "method=existing_revision" >> $GITHUB_OUTPUT
-            echo "revision=$revision" >> $GITHUB_OUTPUT
-            jq --arg rev "$revision" --arg method "existing_revision" \
-              '.revision = $rev | .activation_method = $method | .status = "success" | .message = "Specified revision successfully activated"' \
-              result.json > tmp.json && mv tmp.json result.json
-          else
-            echo "::warning::Failed to activate specified revision, will create fresh replicas"
-            echo "method=fresh_replicas" >> $GITHUB_OUTPUT
-            jq --arg error "$activate_output" \
-              '.activation_method = "fresh_replicas" | .error = $error | .message = "Failed to activate specified revision, will create fresh replicas"' \
-              result.json > tmp.json && mv tmp.json result.json
-          fi
-
-      - name: Create Fresh Replicas
-        id: create_fresh
-        if: github.event.inputs.revision_name == '' || steps.activate_existing.outcome != 'success'
-        run: |
-          set +e
-          echo "Creating fresh replicas by restarting the container app..."
-          
-          # Restart the entire container app to create fresh replicas
-          restart_output=$(az containerapp restart \
-            --name "${{ github.event.inputs.container_app_name }}" \
-            --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
-            --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}" 2>&1)
-          
-          EXIT_CODE=$?
-          if [ $EXIT_CODE -ne 0 ]; then
-            echo "::error::Failed to create fresh replicas"
-            jq --arg error "$restart_output" \
-              '.status = "failed" | .error = $error | .message = "Failed to create fresh replicas"' \
-              result.json > tmp.json && mv tmp.json result.json
-            exit $EXIT_CODE
-          else
-            echo "Fresh replicas created successfully!"
+            echo "✅ Successfully created new revision: $update_result"
+            echo "new_revision=$update_result" >> $GITHUB_OUTPUT
+            echo "restart_success=true" >> $GITHUB_OUTPUT
             
-            # Get the latest revision after restart
-            latest_revision=$(az containerapp revision list \
+            # Wait a moment for the revision to be ready
+            sleep 30
+            
+            # Verify the new revision is active
+            new_revision_status=$(az containerapp revision show \
               --name "${{ github.event.inputs.container_app_name }}" \
               --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
               --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
-              --query "sort_by([], &properties.createdTime) | [-1].name" \
-              -o tsv)
+              --revision "$update_result" \
+              --query "properties.active" \
+              -o tsv 2>/dev/null)
             
-            echo "method=fresh_replicas" >> $GITHUB_OUTPUT
-            echo "revision=$latest_revision" >> $GITHUB_OUTPUT
-            jq --arg rev "$latest_revision" --arg method "fresh_replicas" \
-              '.revision = $rev | .activation_method = $method | .status = "success" | .message = "Fresh replicas successfully created"' \
-              result.json > tmp.json && mv tmp.json result.json
+            if [ "$new_revision_status" = "true" ]; then
+              final_status="success"
+              message="Successfully restarted container app with new revision: $update_result"
+            else
+              final_status="partial_success"
+              message="New revision created but may not be fully active yet: $update_result"
+            fi
+            
+            cat > result.json << EOF
+          {
+            "run_id": "${{ github.run_id }}",
+            "status": "$final_status",
+            "container_app_name": "${{ github.event.inputs.container_app_name }}",
+            "restart_method": "create_revision",
+            "new_revision": "$update_result",
+            "revisions": ["$update_result"],
+            "error": null,
+            "message": "$message"
+          }
+          EOF
+          else
+            echo "❌ Failed to create new revision: $update_result"
+            echo "restart_success=false" >> $GITHUB_OUTPUT
+            
+            cat > result.json << EOF
+          {
+            "run_id": "${{ github.run_id }}",
+            "status": "failed",
+            "container_app_name": "${{ github.event.inputs.container_app_name }}",
+            "restart_method": "create_revision",
+            "revisions": [],
+            "error": "Failed to create new revision: $update_result",
+            "message": "Could not restart container app by creating new revision"
+          }
+          EOF
           fi
 
-      - name: Verify Replicas Running
-        id: verify_replicas
-        if: steps.activate_existing.outcome == 'success' || steps.create_fresh.outcome == 'success'
+      - name: Method 2 - Update Replica Count
+        id: update_replicas
+        if: steps.check_app.outputs.app_exists == 'true' && github.event.inputs.restart_method == 'update_replicas'
         run: |
           set +e
-          revision="${{ steps.activate_existing.outputs.revision || steps.create_fresh.outputs.revision }}"
+          echo "Restarting by updating replica count..."
           
-          echo "Checking replicas for revision: $revision"
-          replica_status=$(az containerapp revision show \
+          # Get current replica configuration
+          current_replicas=$(az containerapp show \
             --name "${{ github.event.inputs.container_app_name }}" \
             --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
             --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
-            --revision "$revision" \
-            --query "properties.replicas" \
+            --query "properties.template.scale" \
             -o json)
           
-          if [ "$(echo "$replica_status" | jq 'length')" -gt 0 ]; then
-            echo "Replicas are running successfully"
-            jq --argjson replicas "$replica_status" \
-              '.replica_status = $replicas | .message = "Replicas running successfully"' \
-              result.json > tmp.json && mv tmp.json result.json
+          min_replicas=$(echo "$current_replicas" | jq -r '.minReplicas // 0')
+          max_replicas=$(echo "$current_replicas" | jq -r '.maxReplicas // 10')
+          
+          echo "Current replica range: $min_replicas - $max_replicas"
+          
+          # First scale down to 0 (if possible)
+          if [ "$min_replicas" -gt 0 ]; then
+            echo "Setting min replicas to 0..."
+            az containerapp update \
+              --name "${{ github.event.inputs.container_app_name }}" \
+              --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
+              --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
+              --min-replicas 0 \
+              --max-replicas $max_replicas
+            
+            sleep 30
+          fi
+          
+          # Then scale back up
+          echo "Scaling back up..."
+          scale_result=$(az containerapp update \
+            --name "${{ github.event.inputs.container_app_name }}" \
+            --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
+            --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
+            --min-replicas $([ "$min_replicas" -eq 0 ] && echo 1 || echo $min_replicas) \
+            --max-replicas $max_replicas \
+            --query "properties.latestRevisionName" \
+            -o tsv 2>&1)
+          
+          EXIT_CODE=$?
+          
+          if [ $EXIT_CODE -eq 0 ]; then
+            echo "✅ Successfully restarted by updating replicas"
+            echo "restart_success=true" >> $GITHUB_OUTPUT
+            
+            cat > result.json << EOF
+          {
+            "run_id": "${{ github.run_id }}",
+            "status": "success",
+            "container_app_name": "${{ github.event.inputs.container_app_name }}",
+            "restart_method": "update_replicas",
+            "latest_revision": "$scale_result",
+            "revisions": ["$scale_result"],
+            "replica_config": {
+              "min_replicas": $([ "$min_replicas" -eq 0 ] && echo 1 || echo $min_replicas),
+              "max_replicas": $max_replicas
+            },
+            "error": null,
+            "message": "Successfully restarted container app by updating replica count"
+          }
+          EOF
           else
-            echo "::warning::No replicas found after activation"
-            jq --argjson replicas "$replica_status" \
-              '.replica_status = $replicas | .message = "No replicas found after activation attempt"' \
-              result.json > tmp.json && mv tmp.json result.json
+            echo "❌ Failed to restart by updating replicas: $scale_result"
+            echo "restart_success=false" >> $GITHUB_OUTPUT
+            
+            cat > result.json << EOF
+          {
+            "run_id": "${{ github.run_id }}",
+            "status": "failed",
+            "container_app_name": "${{ github.event.inputs.container_app_name }}",
+            "restart_method": "update_replicas",
+            "revisions": [],
+            "error": "Failed to update replicas: $scale_result",
+            "message": "Could not restart container app by updating replica count"
+          }
+          EOF
+          fi
+
+      - name: Method 3 - Force Restart
+        id: force_restart
+        if: steps.check_app.outputs.app_exists == 'true' && github.event.inputs.restart_method == 'force_restart'
+        run: |
+          set +e
+          echo "Performing force restart..."
+          
+          # This method combines deactivating current revisions and creating a new one
+          active_revisions="${{ steps.get_revisions.outputs.active_revision_names }}"
+          
+          if [ -n "$active_revisions" ]; then
+            echo "Deactivating current active revisions: $active_revisions"
+            for rev in $active_revisions; do
+              echo "Deactivating: $rev"
+              az containerapp revision deactivate \
+                --name "${{ github.event.inputs.container_app_name }}" \
+                --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
+                --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
+                --revision "$rev"
+            done
+            
+            sleep 10
+          fi
+          
+          # Create new revision
+          timestamp=$(date +%s)
+          new_revision_result=$(az containerapp update \
+            --name "${{ github.event.inputs.container_app_name }}" \
+            --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
+            --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
+            --set-env-vars "FORCE_RESTART_TIMESTAMP=$timestamp" \
+            --query "properties.latestRevisionName" \
+            -o tsv 2>&1)
+          
+          EXIT_CODE=$?
+          
+          if [ $EXIT_CODE -eq 0 ]; then
+            echo "✅ Successfully performed force restart"
+            echo "restart_success=true" >> $GITHUB_OUTPUT
+            
+            cat > result.json << EOF
+          {
+            "run_id": "${{ github.run_id }}",
+            "status": "success",
+            "container_app_name": "${{ github.event.inputs.container_app_name }}",
+            "restart_method": "force_restart",
+            "new_revision": "$new_revision_result",
+            "deactivated_revisions": "$active_revisions",
+            "revisions": ["$new_revision_result"],
+            "error": null,
+            "message": "Successfully performed force restart with new revision: $new_revision_result"
+          }
+          EOF
+          else
+            echo "❌ Failed to perform force restart: $new_revision_result"
+            echo "restart_success=false" >> $GITHUB_OUTPUT
+            
+            cat > result.json << EOF
+          {
+            "run_id": "${{ github.run_id }}",
+            "status": "failed",
+            "container_app_name": "${{ github.event.inputs.container_app_name }}",
+            "restart_method": "force_restart",
+            "revisions": [],
+            "error": "Failed to perform force restart: $new_revision_result",
+            "message": "Could not perform force restart"
+          }
+          EOF
+          fi
+
+      - name: Verify Restart Success
+        if: steps.check_app.outputs.app_exists == 'true'
+        run: |
+          echo "Verifying restart success..."
+          sleep 15
+          
+          # Check current status
+          final_status=$(az containerapp show \
+            --name "${{ github.event.inputs.container_app_name }}" \
+            --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
+            --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
+            --query "{provisioningState: properties.provisioningState, runningStatus: properties.runningStatus, latestRevision: properties.latestRevisionName}" \
+            -o json)
+          
+          echo "Final container app status:"
+          echo "$final_status" | jq '.'
+          
+          # Update result with final status
+          if [ -f result.json ]; then
+            current_result=$(cat result.json)
+            echo "$current_result" | jq --argjson final_status "$final_status" '. + {"final_app_status": $final_status}' > result.json
           fi
 
       - name: Set Final Status
@@ -166,20 +410,53 @@ jobs:
         run: |
           if [ -f result.json ]; then
             status=$(jq -r '.status' result.json)
+            echo "Final workflow status: $status"
             echo "status=$status" >> $GITHUB_OUTPUT
           else
+            echo "No result.json found, creating error result"
+            cat > result.json << 'EOF'
+          {
+            "run_id": "${{ github.run_id }}",
+            "status": "failed",
+            "container_app_name": "${{ github.event.inputs.container_app_name }}",
+            "restart_method": "${{ github.event.inputs.restart_method }}",
+            "revisions": [],
+            "error": "Workflow completed but no result was generated",
+            "message": "Unknown error occurred during processing"
+          }
+          EOF
             echo "status=failed" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Display Final Result
+        if: always()
+        run: |
+          echo "=== Final Restart Result ==="
+          if [ -f result.json ]; then
+            cat result.json | jq '.'
+          else
+            echo "No result.json file found"
           fi
 
       - name: Upload Result Artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: start-result-${{ github.event.inputs.container_app_name }}
+          name: restart-result-${{ github.event.inputs.container_app_name }}
           path: result.json
 
-      - name: Display Final Result
+      - name: Upload Summary Artifact
         if: always()
         run: |
-          echo "=== Activation Result ==="
-          cat result.json
+          if [ -f result.json ]; then
+            cp result.json summary.json
+          else
+            echo '{"error": "No result generated"}' > summary.json
+          fi
+
+      - name: Upload Summary Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: restart-summary-${{ github.event.inputs.container_app_name }}
+          path: summary.json
