@@ -186,7 +186,7 @@ jobs:
           EXIT_CODE=$?
           
           if [ $EXIT_CODE -eq 0 ]; then
-            echo "✅ Successfully created new revision: $update_result"
+            echo "Successfully created new revision: $update_result"
             echo "new_revision=$update_result" >> $GITHUB_OUTPUT
             echo "restart_success=true" >> $GITHUB_OUTPUT
             
@@ -223,7 +223,7 @@ jobs:
           }
           EOF
           else
-            echo "❌ Failed to create new revision: $update_result"
+            echo "Failed to create new revision: $update_result"
             echo "restart_success=false" >> $GITHUB_OUTPUT
             
             cat > result.json << EOF
@@ -286,7 +286,7 @@ jobs:
           EXIT_CODE=$?
           
           if [ $EXIT_CODE -eq 0 ]; then
-            echo "✅ Successfully restarted by updating replicas"
+            echo "Successfully restarted by updating replicas"
             echo "restart_success=true" >> $GITHUB_OUTPUT
             
             cat > result.json << EOF
@@ -306,7 +306,7 @@ jobs:
           }
           EOF
           else
-            echo "❌ Failed to restart by updating replicas: $scale_result"
+            echo "Failed to restart by updating replicas: $scale_result"
             echo "restart_success=false" >> $GITHUB_OUTPUT
             
             cat > result.json << EOF
@@ -359,7 +359,7 @@ jobs:
           EXIT_CODE=$?
           
           if [ $EXIT_CODE -eq 0 ]; then
-            echo "✅ Successfully performed force restart"
+            echo "Successfully performed force restart"
             echo "restart_success=true" >> $GITHUB_OUTPUT
             
             cat > result.json << EOF
@@ -376,7 +376,7 @@ jobs:
           }
           EOF
           else
-            echo "❌ Failed to perform force restart: $new_revision_result"
+            echo "Failed to perform force restart: $new_revision_result"
             echo "restart_success=false" >> $GITHUB_OUTPUT
             
             cat > result.json << EOF
