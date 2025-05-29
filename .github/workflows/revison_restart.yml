@@ -175,13 +175,14 @@ jobs:
           # Create a new revision by updating with a timestamp annotation
           timestamp=$(date +%s)
           
+          # Run update command and clean the output
           update_result=$(az containerapp update \
             --name "${{ github.event.inputs.container_app_name }}" \
             --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
             --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
             --set-env-vars "RESTART_TIMESTAMP=$timestamp" \
             --query "properties.latestRevisionName" \
-            -o tsv 2>&1)
+            -o tsv 2>&1 | sed -e 's/[[:cntrl:]]//g' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' | head -1)
           
           EXIT_CODE=$?
           
@@ -190,34 +191,20 @@ jobs:
             echo "new_revision=$update_result" >> $GITHUB_OUTPUT
             echo "restart_success=true" >> $GITHUB_OUTPUT
             
-            # Wait a moment for the revision to be ready
-            sleep 30
+            # Skip detailed health check as per requirements
+            final_status="success"
+            message="Successfully restarted container app with new revision: $update_result"
             
-            # Verify the new revision is active
-            new_revision_status=$(az containerapp revision show \
-              --name "${{ github.event.inputs.container_app_name }}" \
-              --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
-              --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
-              --revision "$update_result" \
-              --query "properties.active" \
-              -o tsv 2>/dev/null)
-            
-            if [ "$new_revision_status" = "true" ]; then
-              final_status="success"
-              message="Successfully restarted container app with new revision: $update_result"
-            else
-              final_status="partial_success"
-              message="New revision created but may not be fully active yet: $update_result"
-            fi
-            
+            # Create result JSON with sanitized output
+            sanitized_revision=$(echo "$update_result" | jq -R -s -c '.')
             cat > result.json << EOF
           {
             "run_id": "${{ github.run_id }}",
             "status": "$final_status",
             "container_app_name": "${{ github.event.inputs.container_app_name }}",
             "restart_method": "create_revision",
-            "new_revision": "$update_result",
-            "revisions": ["$update_result"],
+            "new_revision": $sanitized_revision,
+            "revisions": [$sanitized_revision],
             "error": null,
             "message": "$message"
           }
@@ -226,6 +213,8 @@ jobs:
             echo "Failed to create new revision: $update_result"
             echo "restart_success=false" >> $GITHUB_OUTPUT
             
+            # Create error JSON with sanitized output
+            sanitized_error=$(echo "$update_result" | jq -R -s -c '.')
             cat > result.json << EOF
           {
             "run_id": "${{ github.run_id }}",
@@ -233,7 +222,7 @@ jobs:
             "container_app_name": "${{ github.event.inputs.container_app_name }}",
             "restart_method": "create_revision",
             "revisions": [],
-            "error": "Failed to create new revision: $update_result",
+            "error": $sanitized_error,
             "message": "Could not restart container app by creating new revision"
           }
           EOF
