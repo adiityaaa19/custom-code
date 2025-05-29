@@ -52,21 +52,22 @@ jobs:
           set +e
           echo "Checking if container app exists..."
           
-          app_info=$(az containerapp show \
+          # Simple check - just get the name to verify existence
+          app_name=$(az containerapp show \
             --name "${{ github.event.inputs.container_app_name }}" \
             --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
             --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
-            --query "{name: name, provisioningState: properties.provisioningState, runningStatus: properties.runningStatus}" \
-            -o json 2>&1)
+            --query "name" \
+            -o tsv 2>&1)
           
           EXIT_CODE=$?
           
           if [ $EXIT_CODE -ne 0 ]; then
-            echo "Container app not found or error occurred"
+            echo "Container app not found or error occurred: $app_name"
             echo "app_exists=false" >> $GITHUB_OUTPUT
             echo "error_message=Container app '${{ github.event.inputs.container_app_name }}' not found" >> $GITHUB_OUTPUT
             
-            cat > result.json << EOF
+            cat > result.json << 'EOF'
           {
             "run_id": "${{ github.run_id }}",
             "status": "failed",
@@ -78,13 +79,23 @@ jobs:
           }
           EOF
           else
-            echo "Container app found"
+            echo "Container app found: $app_name"
             echo "app_exists=true" >> $GITHUB_OUTPUT
-            echo "app_info=$app_info" >> $GITHUB_OUTPUT
             
-            # Parse app info
-            provisioning_state=$(echo "$app_info" | jq -r '.provisioningState // "Unknown"')
-            running_status=$(echo "$app_info" | jq -r '.runningStatus // "Unknown"')
+            # Get additional status info separately
+            provisioning_state=$(az containerapp show \
+              --name "${{ github.event.inputs.container_app_name }}" \
+              --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
+              --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
+              --query "properties.provisioningState" \
+              -o tsv 2>/dev/null || echo "Unknown")
+            
+            running_status=$(az containerapp show \
+              --name "${{ github.event.inputs.container_app_name }}" \
+              --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
+              --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
+              --query "properties.runningStatus" \
+              -o tsv 2>/dev/null || echo "Unknown")
             
             echo "provisioning_state=$provisioning_state" >> $GITHUB_OUTPUT
             echo "running_status=$running_status" >> $GITHUB_OUTPUT
