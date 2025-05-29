@@ -25,7 +25,7 @@ jobs:
       - name: Initialize Result JSON
         run: |
           mkdir -p output
-          cat > output/result.json << 'EOF'
+          cat > output/result_${{ inputs.unique_id }}.json << 'EOF'
           {
             "run_id": "${{ github.run_id }}",
             "status": "running",
@@ -62,7 +62,7 @@ jobs:
             echo "Container app not found: $app_check"
             echo "app_exists=false" >> $GITHUB_OUTPUT
             
-            cat > output/result.json << EOF
+            cat > output/result_$UNIQUE_ID.json << EOF
           {
             "run_id": "${{ github.run_id }}",
             "status": "failed",
@@ -79,7 +79,7 @@ jobs:
             echo "Container app found: $app_check"
             echo "app_exists=true" >> $GITHUB_OUTPUT
             
-            cat > output/result.json << EOF
+            cat > output/result_$UNIQUE_ID.json << EOF
           {
             "run_id": "${{ github.run_id }}",
             "status": "processing",
@@ -115,7 +115,7 @@ jobs:
           if [ $EXIT_CODE -eq 0 ]; then
             echo "Container app deleted successfully"
             
-            cat > output/result.json << EOF
+            cat > output/result_$UNIQUE_ID.json << EOF
           {
             "run_id": "${{ github.run_id }}",
             "status": "success",
@@ -131,7 +131,7 @@ jobs:
           else
             echo "Failed to delete container app: $delete_output"
             
-            cat > output/result.json << EOF
+            cat > output/result_$UNIQUE_ID.json << EOF
           {
             "run_id": "${{ github.run_id }}",
             "status": "failed",
@@ -150,13 +150,13 @@ jobs:
         if: always()
         run: |
           echo "=== Deletion Result ==="
-          if [ -f output/result.json ]; then
-            cat output/result.json | jq . || cat output/result.json
+          if [ -f output/result_${{ inputs.unique_id }}.json ]; then
+            cat output/result_${{ inputs.unique_id }}.json | jq . || cat output/result_${{ inputs.unique_id }}.json
           fi
 
       - name: Upload result artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: result
-          path: output/result.json
+          name: "result_${{ inputs.unique_id }}"
+          path: "output/result_${{ inputs.unique_id }}.json"
