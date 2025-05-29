@@ -1,0 +1,54 @@
+name: Delete Azure Container App
+
+on:
+  workflow_dispatch:
+    inputs:
+      name:
+        description: 'Name of the Azure Container App to delete'
+        required: true
+
+jobs:
+  delete-app:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Delete Container App
+        run: |
+          APP_NAME="${{ inputs.name }}"
+          RESOURCE_GROUP="${{ secrets.RESOURCE_GROUP }}"
+          
+          echo "Deleting Azure Container App: $APP_NAME in resource group: $RESOURCE_GROUP"
+          az containerapp delete \
+            --name "$APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --yes
+
+      - name: Create metadata JSON
+        run: |
+          mkdir -p output
+          TOOL_ID="${{ inputs.name }}"
+          cat <<EOF > output/tool-${TOOL_ID}.json
+          {
+            "tool-id": "${TOOL_ID}",
+            "name": "${{ inputs.name }}",
+            "resource-group": "${{ secrets.RESOURCE_GROUP }}",
+            "container-app-name": "${{ inputs.name }}",
+            "sha": "${{ github.sha }}",
+            "run-id": "${{ github.run_id }}",
+            "status": "deleted"
+          }
+          EOF
+
+      - name: Upload metadata artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tool-${{ inputs.name }}
+          path: output/tool-${{ inputs.name }}.json
