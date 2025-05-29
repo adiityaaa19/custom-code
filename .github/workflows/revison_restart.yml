@@ -398,21 +398,39 @@ jobs:
           echo "Verifying restart success..."
           sleep 15
           
-          # Check current status
-          final_status=$(az containerapp show \
+          # Get status information separately to avoid JSON parsing issues
+          provisioning_state=$(az containerapp show \
             --name "${{ github.event.inputs.container_app_name }}" \
             --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
             --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
-            --query "{provisioningState: properties.provisioningState, runningStatus: properties.runningStatus, latestRevision: properties.latestRevisionName}" \
-            -o json)
+            --query "properties.provisioningState" \
+            -o tsv 2>/dev/null || echo "Unknown")
+          
+          running_status=$(az containerapp show \
+            --name "${{ github.event.inputs.container_app_name }}" \
+            --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
+            --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
+            --query "properties.runningStatus" \
+            -o tsv 2>/dev/null || echo "Unknown")
+          
+          latest_revision=$(az containerapp show \
+            --name "${{ github.event.inputs.container_app_name }}" \
+            --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
+            --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
+            --query "properties.latestRevisionName" \
+            -o tsv 2>/dev/null || echo "Unknown")
           
           echo "Final container app status:"
-          echo "$final_status" | jq '.'
+          echo "  Provisioning State: $provisioning_state"
+          echo "  Running Status: $running_status"
+          echo "  Latest Revision: $latest_revision"
           
           # Update result with final status
           if [ -f result.json ]; then
             current_result=$(cat result.json)
-            echo "$current_result" | jq --argjson final_status "$final_status" '. + {"final_app_status": $final_status}' > result.json
+            # Create the final status JSON manually to avoid control character issues
+            final_status_json="{\"provisioning_state\": \"$provisioning_state\", \"running_status\": \"$running_status\", \"latest_revision\": \"$latest_revision\"}"
+            echo "$current_result" | jq --argjson final_status "$final_status_json" '. + {"final_app_status": $final_status}' > result.json
           fi
 
       - name: Set Final Status
@@ -456,7 +474,7 @@ jobs:
           name: restart-result-${{ github.event.inputs.container_app_name }}
           path: result.json
 
-      - name: Upload Summary Artifact
+      - name: Create Summary
         if: always()
         run: |
           if [ -f result.json ]; then
