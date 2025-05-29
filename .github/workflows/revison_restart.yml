@@ -464,40 +464,12 @@ jobs:
         id: final_status
         if: always()
         run: |
+          # Simplified version that just reads the status from result.json
           if [ -f result.json ]; then
-            # Ensure the JSON is valid before reading it
-            if jq -e . result.json >/dev/null 2>&1; then
-              status=$(jq -r '.status' result.json)
-              echo "Final workflow status: $status"
-              echo "status=$status" >> $GITHUB_OUTPUT
-            else
-              echo "Invalid JSON in result.json, creating error result"
-              cat > result.json << 'EOF'
-              {
-                "run_id": "${{ github.run_id }}",
-                "status": "failed",
-                "container_app_name": "${{ github.event.inputs.container_app_name }}",
-                "restart_method": "${{ github.event.inputs.restart_method }}",
-                "revisions": [],
-                "error": "Invalid JSON result generated",
-                "message": "Could not parse workflow result"
-              }
-              EOF
-              echo "status=failed" >> $GITHUB_OUTPUT
-            fi
+            status=$(jq -r '.status' result.json 2>/dev/null || echo "unknown")
+            echo "Final workflow status: $status"
+            echo "status=$status" >> $GITHUB_OUTPUT
           else
-            echo "No result.json found, creating error result"
-            cat > result.json << 'EOF'
-            {
-              "run_id": "${{ github.run_id }}",
-              "status": "failed",
-              "container_app_name": "${{ github.event.inputs.container_app_name }}",
-              "restart_method": "${{ github.event.inputs.restart_method }}",
-              "revisions": [],
-              "error": "Workflow completed but no result was generated",
-              "message": "Unknown error occurred during processing"
-            }
-            EOF
             echo "status=failed" >> $GITHUB_OUTPUT
           fi
 
