@@ -3,7 +3,7 @@ name: Delete Azure Container App
 on:
   workflow_dispatch:
     inputs:
-      name:
+      container_app_name:
         description: 'Name of the Azure Container App to delete'
         required: true
 
