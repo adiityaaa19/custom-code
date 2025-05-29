@@ -398,7 +398,7 @@ jobs:
           echo "Verifying restart success..."
           sleep 15
           
-          # Get status information separately to avoid JSON parsing issues
+          # Get status information
           provisioning_state=$(az containerapp show \
             --name "${{ github.event.inputs.container_app_name }}" \
             --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
@@ -425,12 +425,18 @@ jobs:
           echo "  Running Status: $running_status"
           echo "  Latest Revision: $latest_revision"
           
-          # Update result with final status
+          # Update result with final status using jq for proper JSON handling
           if [ -f result.json ]; then
-            current_result=$(cat result.json)
-            # Create the final status JSON manually to avoid control character issues
-            final_status_json="{\"provisioning_state\": \"$provisioning_state\", \"running_status\": \"$running_status\", \"latest_revision\": \"$latest_revision\"}"
-            echo "$current_result" | jq --argjson final_status "$final_status_json" '. + {"final_app_status": $final_status}' > result.json
+            jq --arg ps "$provisioning_state" \
+               --arg rs "$running_status" \
+               --arg lr "$latest_revision" \
+               '. + {
+                 final_app_status: {
+                   provisioning_state: $ps,
+                   running_status: $rs,
+                   latest_revision: $lr
+                 }
+               }' result.json > result.tmp && mv result.tmp result.json
           fi
 
       - name: Set Final Status
@@ -438,22 +444,39 @@ jobs:
         if: always()
         run: |
           if [ -f result.json ]; then
-            status=$(jq -r '.status' result.json)
-            echo "Final workflow status: $status"
-            echo "status=$status" >> $GITHUB_OUTPUT
+            # Ensure the JSON is valid before reading it
+            if jq -e . result.json >/dev/null 2>&1; then
+              status=$(jq -r '.status' result.json)
+              echo "Final workflow status: $status"
+              echo "status=$status" >> $GITHUB_OUTPUT
+            else
+              echo "Invalid JSON in result.json, creating error result"
+              cat > result.json << 'EOF'
+              {
+                "run_id": "${{ github.run_id }}",
+                "status": "failed",
+                "container_app_name": "${{ github.event.inputs.container_app_name }}",
+                "restart_method": "${{ github.event.inputs.restart_method }}",
+                "revisions": [],
+                "error": "Invalid JSON result generated",
+                "message": "Could not parse workflow result"
+              }
+              EOF
+              echo "status=failed" >> $GITHUB_OUTPUT
+            fi
           else
             echo "No result.json found, creating error result"
             cat > result.json << 'EOF'
-          {
-            "run_id": "${{ github.run_id }}",
-            "status": "failed",
-            "container_app_name": "${{ github.event.inputs.container_app_name }}",
-            "restart_method": "${{ github.event.inputs.restart_method }}",
-            "revisions": [],
-            "error": "Workflow completed but no result was generated",
-            "message": "Unknown error occurred during processing"
-          }
-          EOF
+            {
+              "run_id": "${{ github.run_id }}",
+              "status": "failed",
+              "container_app_name": "${{ github.event.inputs.container_app_name }}",
+              "restart_method": "${{ github.event.inputs.restart_method }}",
+              "revisions": [],
+              "error": "Workflow completed but no result was generated",
+              "message": "Unknown error occurred during processing"
+            }
+            EOF
             echo "status=failed" >> $GITHUB_OUTPUT
           fi
 
@@ -462,7 +485,8 @@ jobs:
         run: |
           echo "=== Final Restart Result ==="
           if [ -f result.json ]; then
-            cat result.json | jq '.'
+            # Pretty-print the JSON with colors for better visibility
+            jq -C . result.json || cat result.json
           else
             echo "No result.json file found"
           fi
