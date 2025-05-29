@@ -1,0 +1,162 @@
+name: Delete Azure Container App
+
+on:
+  workflow_dispatch:
+    inputs:
+      container_app_name:
+        description: 'Name of the Azure Container App to delete'
+        required: true
+      unique_id:
+        description: 'Unique identifier for tracking this workflow run'
+        required: true
+
+jobs:
+  delete-app:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Initialize Result JSON
+        run: |
+          mkdir -p output
+          cat > output/result.json << 'EOF'
+          {
+            "run_id": "${{ github.run_id }}",
+            "status": "running",
+            "container_app_name": "${{ inputs.container_app_name }}",
+            "unique_id": "${{ inputs.unique_id }}",
+            "operation": "delete",
+            "resource_group": "${{ secrets.AZURE_RESOURCE_GROUP }}",
+            "deleted_at": null,
+            "error": null,
+            "message": "Starting container app deletion process"
+          }
+          EOF
+
+      - name: Check Container App Exists
+        id: check_app
+        run: |
+          set +e
+          APP_NAME="${{ inputs.container_app_name }}"
+          RESOURCE_GROUP="${{ secrets.AZURE_RESOURCE_GROUP }}"
+          UNIQUE_ID="${{ inputs.unique_id }}"
+          
+          echo "Checking if container app exists: $APP_NAME in resource group: $RESOURCE_GROUP"
+          
+          # Check if app exists
+          app_check=$(az containerapp show \
+            --name "$APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --query "name" \
+            -o tsv 2>&1)
+          
+          EXIT_CODE=$?
+          
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "Container app not found: $app_check"
+            echo "app_exists=false" >> $GITHUB_OUTPUT
+            
+            cat > output/result.json << EOF
+          {
+            "run_id": "${{ github.run_id }}",
+            "status": "failed",
+            "container_app_name": "$APP_NAME",
+            "unique_id": "$UNIQUE_ID",
+            "operation": "delete",
+            "resource_group": "$RESOURCE_GROUP",
+            "deleted_at": null,
+            "error": "Container app not found",
+            "message": "Container app '$APP_NAME' does not exist in resource group '$RESOURCE_GROUP'"
+          }
+          EOF
+          else
+            echo "Container app found: $app_check"
+            echo "app_exists=true" >> $GITHUB_OUTPUT
+            
+            cat > output/result.json << EOF
+          {
+            "run_id": "${{ github.run_id }}",
+            "status": "processing",
+            "container_app_name": "$APP_NAME",
+            "unique_id": "$UNIQUE_ID",
+            "operation": "delete",
+            "resource_group": "$RESOURCE_GROUP",
+            "deleted_at": null,
+            "error": null,
+            "message": "Container app found, proceeding with deletion"
+          }
+          EOF
+          fi
+
+      - name: Delete Container App
+        if: steps.check_app.outputs.app_exists == 'true'
+        run: |
+          set +e
+          APP_NAME="${{ inputs.container_app_name }}"
+          RESOURCE_GROUP="${{ secrets.AZURE_RESOURCE_GROUP }}"
+          UNIQUE_ID="${{ inputs.unique_id }}"
+          
+          echo "Deleting Azure Container App: $APP_NAME in resource group: $RESOURCE_GROUP"
+          
+          # Delete the container app
+          delete_output=$(az containerapp delete \
+            --name "$APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --yes 2>&1)
+          
+          EXIT_CODE=$?
+          
+          if [ $EXIT_CODE -eq 0 ]; then
+            echo "Container app deleted successfully"
+            
+            cat > output/result.json << EOF
+          {
+            "run_id": "${{ github.run_id }}",
+            "status": "success",
+            "container_app_name": "$APP_NAME",
+            "unique_id": "$UNIQUE_ID",
+            "operation": "delete",
+            "resource_group": "$RESOURCE_GROUP",
+            "deleted_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "error": null,
+            "message": "Container app '$APP_NAME' has been successfully deleted"
+          }
+          EOF
+          else
+            echo "Failed to delete container app: $delete_output"
+            
+            cat > output/result.json << EOF
+          {
+            "run_id": "${{ github.run_id }}",
+            "status": "failed",
+            "container_app_name": "$APP_NAME",
+            "unique_id": "$UNIQUE_ID",
+            "operation": "delete",
+            "resource_group": "$RESOURCE_GROUP",
+            "deleted_at": null,
+            "error": "Failed to delete container app",
+            "message": "Deletion failed: $delete_output"
+          }
+          EOF
+          fi
+
+      - name: Display Results
+        if: always()
+        run: |
+          echo "=== Deletion Result ==="
+          if [ -f output/result.json ]; then
+            cat output/result.json | jq . || cat output/result.json
+          fi
+
+      - name: Upload result artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: result
+          path: output/result.json
