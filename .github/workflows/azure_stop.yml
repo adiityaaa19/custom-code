@@ -7,10 +7,6 @@ on:
         description: 'Name of the Container App to stop'
         required: true
         type: string
-      subscription_id:
-        description: 'Azure Subscription ID'
-        required: true
-        type: string
 
 jobs:
   stop:
@@ -49,7 +45,7 @@ jobs:
           app_check=$(az containerapp show \
             --name "${{ github.event.inputs.container_app_name }}" \
             --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
-            --subscription "${{ github.event.inputs.subscription_id }}" \
+            --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
             --query "name" \
             -o tsv 2>&1)
           
@@ -86,7 +82,7 @@ jobs:
           revisions=$(az containerapp revision list \
             --name "${{ github.event.inputs.container_app_name }}" \
             --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
-            --subscription "${{ github.event.inputs.subscription_id }}" \
+            --subscription "${{secrets.AZURE_SUBSCRIPTION_ID }}" \
             --query "[?properties.active].name" \
             -o tsv 2>&1)
 
@@ -151,7 +147,7 @@ jobs:
             deactivate_output=$(az containerapp revision deactivate \
               --name "${{ github.event.inputs.container_app_name }}" \
               --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
-              --subscription "${{ github.event.inputs.subscription_id }}" \
+              --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
               --revision "$rev" 2>&1)
             
             STATUS=$?
