@@ -1,5 +1,4 @@
-
-name: Start Azure Container App by Activating Revision
+name: Start Azure Container App with Fresh Replicas
 
 on:
   workflow_dispatch:
@@ -9,7 +8,7 @@ on:
         required: true
         type: string
       revision_name:
-        description: 'Optional: Specific revision to activate. If not provided, the latest inactive revision will be activated.'
+        description: 'Optional: Specific revision to activate. If not provided, will create fresh replicas.'
         required: false
         type: string
 
@@ -65,49 +64,14 @@ jobs:
             echo "status=success" >> $GITHUB_OUTPUT
           fi
 
-      - name: Determine Revision to Activate
-        id: determine_revision
-        run: |
-          # If revision name is provided, use it
-          if [ -n "${{ github.event.inputs.revision_name }}" ]; then
-            revision="${{ github.event.inputs.revision_name }}"
-            method="user_specified"
-            echo "Using user-specified revision: $revision"
-          else
-            echo "Finding latest inactive revision..."
-            revision=$(az containerapp revision list \
-              --name "${{ github.event.inputs.container_app_name }}" \
-              --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
-              --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
-              --query "[?properties.active==\`false\`] | sort_by([], &properties.createdTime) | [-1].name" \
-              -o tsv)
-            
-            if [ -z "$revision" ]; then
-              echo "::error::No inactive revisions found"
-              jq --arg error "No inactive revisions available" \
-                '.status = "failed" | .error = $error | .message = "No revisions to activate"' \
-                result.json > tmp.json && mv tmp.json result.json
-              exit 1
-            fi
-            method="latest_inactive"
-            echo "Selected latest inactive revision: $revision"
-          fi
-
-          echo "revision=$revision" >> $GITHUB_OUTPUT
-          echo "method=$method" >> $GITHUB_OUTPUT
-
-          # Update result.json
-          jq --arg rev "$revision" --arg method "$method" \
-            '.revision = $rev | .activation_method = $method | .message = "Revision selected for activation"' \
-            result.json > tmp.json && mv tmp.json result.json
-
-      - name: Activate Revision
-        id: activate_revision
+      - name: Try to Activate Existing Revision (if specified)
+        id: activate_existing
+        if: github.event.inputs.revision_name != ''
         run: |
           set +e
-          revision="${{ steps.determine_revision.outputs.revision }}"
+          revision="${{ github.event.inputs.revision_name }}"
           
-          echo "Activating revision: $revision"
+          echo "Attempting to activate specified revision: $revision"
           activate_output=$(az containerapp revision activate \
             --name "${{ github.event.inputs.container_app_name }}" \
             --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
@@ -115,15 +79,84 @@ jobs:
             --revision "$revision" 2>&1)
           
           EXIT_CODE=$?
-          if [ $EXIT_CODE -ne 0 ]; then
-            echo "::error::Activation failed"
+          if [ $EXIT_CODE -eq 0 ]; then
+            echo "Activation successful!"
+            echo "method=existing_revision" >> $GITHUB_OUTPUT
+            echo "revision=$revision" >> $GITHUB_OUTPUT
+            jq --arg rev "$revision" --arg method "existing_revision" \
+              '.revision = $rev | .activation_method = $method | .status = "success" | .message = "Specified revision successfully activated"' \
+              result.json > tmp.json && mv tmp.json result.json
+          else
+            echo "::warning::Failed to activate specified revision, will create fresh replicas"
+            echo "method=fresh_replicas" >> $GITHUB_OUTPUT
             jq --arg error "$activate_output" \
-              '.status = "failed" | .error = $error | .message = "Revision activation failed"' \
+              '.activation_method = "fresh_replicas" | .error = $error | .message = "Failed to activate specified revision, will create fresh replicas"' \
+              result.json > tmp.json && mv tmp.json result.json
+          fi
+
+      - name: Create Fresh Replicas
+        id: create_fresh
+        if: github.event.inputs.revision_name == '' || steps.activate_existing.outcome != 'success'
+        run: |
+          set +e
+          echo "Creating fresh replicas by restarting the container app..."
+          
+          # Restart the entire container app to create fresh replicas
+          restart_output=$(az containerapp restart \
+            --name "${{ github.event.inputs.container_app_name }}" \
+            --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
+            --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}" 2>&1)
+          
+          EXIT_CODE=$?
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "::error::Failed to create fresh replicas"
+            jq --arg error "$restart_output" \
+              '.status = "failed" | .error = $error | .message = "Failed to create fresh replicas"' \
               result.json > tmp.json && mv tmp.json result.json
             exit $EXIT_CODE
           else
-            echo "Activation successful!"
-            jq '.status = "success" | .message = "Revision successfully activated"' \
+            echo "Fresh replicas created successfully!"
+            
+            # Get the latest revision after restart
+            latest_revision=$(az containerapp revision list \
+              --name "${{ github.event.inputs.container_app_name }}" \
+              --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
+              --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
+              --query "sort_by([], &properties.createdTime) | [-1].name" \
+              -o tsv)
+            
+            echo "method=fresh_replicas" >> $GITHUB_OUTPUT
+            echo "revision=$latest_revision" >> $GITHUB_OUTPUT
+            jq --arg rev "$latest_revision" --arg method "fresh_replicas" \
+              '.revision = $rev | .activation_method = $method | .status = "success" | .message = "Fresh replicas successfully created"' \
+              result.json > tmp.json && mv tmp.json result.json
+          fi
+
+      - name: Verify Replicas Running
+        id: verify_replicas
+        if: steps.activate_existing.outcome == 'success' || steps.create_fresh.outcome == 'success'
+        run: |
+          set +e
+          revision="${{ steps.activate_existing.outputs.revision || steps.create_fresh.outputs.revision }}"
+          
+          echo "Checking replicas for revision: $revision"
+          replica_status=$(az containerapp revision show \
+            --name "${{ github.event.inputs.container_app_name }}" \
+            --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
+            --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
+            --revision "$revision" \
+            --query "properties.replicas" \
+            -o json)
+          
+          if [ "$(echo "$replica_status" | jq 'length')" -gt 0 ]; then
+            echo "Replicas are running successfully"
+            jq --argjson replicas "$replica_status" \
+              '.replica_status = $replicas | .message = "Replicas running successfully"' \
+              result.json > tmp.json && mv tmp.json result.json
+          else
+            echo "::warning::No replicas found after activation"
+            jq --argjson replicas "$replica_status" \
+              '.replica_status = $replicas | .message = "No replicas found after activation attempt"' \
               result.json > tmp.json && mv tmp.json result.json
           fi
 
