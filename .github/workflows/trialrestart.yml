@@ -40,65 +40,7 @@ jobs:
           }
           EOF
 
-      - name: Check Container App Exists
-        id: check_app
-        run: |
-          set +e
-          APP_NAME="${{ inputs.container_app_name }}"
-          RESOURCE_GROUP="${{ secrets.AZURE_RESOURCE_GROUP }}"
-          UNIQUE_ID="${{ inputs.unique_id }}"
-          
-          echo "Checking if container app exists: $APP_NAME in resource group: $RESOURCE_GROUP"
-          
-          # Check if app exists
-          app_check=$(az containerapp show \
-            --name "$APP_NAME" \
-            --resource-group "$RESOURCE_GROUP" \
-            --query "name" \
-            -o tsv 2>&1)
-          
-          EXIT_CODE=$?
-          
-          if [ $EXIT_CODE -ne 0 ]; then
-            echo "Container app not found: $app_check"
-            echo "app_exists=false" >> $GITHUB_OUTPUT
-            
-            cat > output/result_$UNIQUE_ID.json << EOF
-          {
-            "run_id": "${{ github.run_id }}",
-            "status": "failed",
-            "container_app_name": "$APP_NAME",
-            "unique_id": "$UNIQUE_ID",
-            "operation": "restart",
-            "resource_group": "$RESOURCE_GROUP",
-            "restarted_at": null,
-            "revision_name": null,
-            "error": "Container app not found",
-            "message": "Container app '$APP_NAME' does not exist in resource group '$RESOURCE_GROUP'"
-          }
-          EOF
-          else
-            echo "Container app found: $app_check"
-            echo "app_exists=true" >> $GITHUB_OUTPUT
-            
-            cat > output/result_$UNIQUE_ID.json << EOF
-          {
-            "run_id": "${{ github.run_id }}",
-            "status": "processing",
-            "container_app_name": "$APP_NAME",
-            "unique_id": "$UNIQUE_ID",
-            "operation": "restart",
-            "resource_group": "$RESOURCE_GROUP",
-            "restarted_at": null,
-            "revision_name": null,
-            "error": null,
-            "message": "Container app found, proceeding with restart"
-          }
-          EOF
-          fi
-
       - name: Restart Container App
-        if: steps.check_app.outputs.app_exists == 'true'
         run: |
           set +e
           APP_NAME="${{ inputs.container_app_name }}"
@@ -107,10 +49,11 @@ jobs:
           
           echo "Restarting Azure Container App: $APP_NAME in resource group: $RESOURCE_GROUP"
           
-          # Restart the container app by creating a new revision
-          restart_output=$(az containerapp revision restart \
+          # Create a new revision to restart the container app
+          restart_output=$(az containerapp update \
             --name "$APP_NAME" \
-            --resource-group "$RESOURCE_GROUP" 2>&1)
+            --resource-group "$RESOURCE_GROUP" \
+            --revision-suffix "restart-$(date +%s)" 2>&1)
           
           EXIT_CODE=$?
           
