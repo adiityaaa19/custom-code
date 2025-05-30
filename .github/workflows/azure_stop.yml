@@ -154,11 +154,11 @@ jobs:
             echo "$deactivate_output" > "deactivate_${rev}.log"
             
             if [ $STATUS -eq 0 ]; then
-              echo "✅ Successfully deactivated revision: $rev"
+              echo "Successfully deactivated revision: $rev"
               ((success_count++))
               deactivated_revisions+=("$rev")
             else
-              echo "❌ Failed to deactivate revision: $rev"
+              echo "Failed to deactivate revision: $rev"
               echo "Error: $deactivate_output"
               ((failure_count++))
               failed_revisions+=("$rev")
