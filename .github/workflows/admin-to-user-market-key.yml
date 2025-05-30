@@ -12,6 +12,10 @@ on:
       credentials:
         description: "JSON string of credentials to pass to container"
         required: true
+      unique_id:
+        description: "Unique identifier for this deployment (8-char alphanumeric)"
+        required: true
+        default: ${{ github.run_id }}
 
 jobs:
   build-and-deploy:
@@ -21,6 +25,7 @@ jobs:
       DEPLOYMENT_ID: ${{ github.event.inputs.deployment_id }}
       TOOL_DIR: ${{ github.event.inputs.tool_dir }}
       CREDENTIALS_JSON: ${{ github.event.inputs.credentials }}
+      UNIQUE_ID: ${{ github.event.inputs.unique_id }}
 
     steps:
       - name: Checkout code
@@ -30,6 +35,13 @@ jobs:
         run: |
           if ! [[ "$DEPLOYMENT_ID" =~ ^[a-z0-9-]{1,32}$ ]]; then
             echo "::error::Invalid deployment_id format. Must be lowercase alphanumeric with hyphens, max 32 chars."
+            exit 1
+          fi
+
+      - name: Validate unique ID format
+        run: |
+          if ! [[ "$UNIQUE_ID" =~ ^[a-zA-Z0-9]{8}$ ]]; then
+            echo "::error::Invalid unique_id format. Must be exactly 8 alphanumeric characters."
             exit 1
           fi
 
@@ -51,6 +63,8 @@ jobs:
           echo "deployment_id=${DEPLOYMENT_ID}" >> $GITHUB_OUTPUT
           echo "TOOL_DIR=${TOOL_DIR}" >> $GITHUB_ENV
           echo "tool_dir=${TOOL_DIR}" >> $GITHUB_OUTPUT
+          echo "UNIQUE_ID=${UNIQUE_ID}" >> $GITHUB_ENV
+          echo "unique_id=${UNIQUE_ID}" >> $GITHUB_OUTPUT
 
       - name: Azure Login
         uses: azure/login@v1
@@ -109,17 +123,34 @@ jobs:
           echo "DEPLOYED_URL=https://$APP_URL" >> $GITHUB_ENV
           echo "DEPLOYED_URL=https://$APP_URL" >> $GITHUB_OUTPUT
 
-      - name: Write deployment info artifact
+      - name: Create deployment result JSON
         run: |
-          echo "deployment_id=$DEPLOYMENT_ID" > $DEPLOYMENT_ID.txt
-          echo "tool_dir=$TOOL_DIR" >> $DEPLOYMENT_ID.txt
-          echo "run_id=${{ github.run_id }}" >> $DEPLOYMENT_ID.txt
-          echo "status=success" >> $DEPLOYMENT_ID.txt
-          echo "endpoint=${{ steps.deploy.outputs.DEPLOYED_URL }}" >> $DEPLOYMENT_ID.txt
-          echo "timestamp=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $DEPLOYMENT_ID.txt
+          # Create a JSON file with all deployment information
+          jq -n \
+            --arg deployment_id "$DEPLOYMENT_ID" \
+            --arg tool_dir "$TOOL_DIR" \
+            --arg run_id "$GITHUB_RUN_ID" \
+            --arg status "success" \
+            --arg endpoint "${{ steps.deploy.outputs.DEPLOYED_URL }}" \
+            --arg timestamp "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
+            --arg unique_id "$UNIQUE_ID" \
+            --arg container_app_name "$DEPLOYMENT_ID" \
+            '{
+              deployment_id: $deployment_id,
+              tool_dir: $tool_dir,
+              run_id: $run_id,
+              status: $status,
+              endpoint: $endpoint,
+              timestamp: $timestamp,
+              unique_id: $unique_id,
+              container_app_name: $container_app_name
+            }' > result_$UNIQUE_ID.json
+
+          # Print the JSON for debugging
+          cat result_$UNIQUE_ID.json
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4.6.2
         with:
-          name: deployed-url-${{ env.DEPLOYMENT_ID }}
-          path: ${{ env.DEPLOYMENT_ID }}.txt
+          name: result_${{ env.UNIQUE_ID }}
+          path: result_${{ env.UNIQUE_ID }}.json
