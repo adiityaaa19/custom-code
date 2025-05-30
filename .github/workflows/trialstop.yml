@@ -51,6 +51,7 @@ jobs:
           
           echo "Getting active revisions for: $APP_NAME in resource group: $RESOURCE_GROUP"
           
+          # Get only active revisions
           revisions=$(az containerapp revision list \
             --name "$APP_NAME" \
             --resource-group "$RESOURCE_GROUP" \
@@ -78,7 +79,7 @@ jobs:
           }
           EOF
           else
-            echo "Found revisions: $revisions"
+            echo "Found active revisions: $revisions"
             echo "revisions_found=true" >> $GITHUB_OUTPUT
             echo "revisions=$revisions" >> $GITHUB_OUTPUT
             
@@ -86,11 +87,12 @@ jobs:
             if [ -z "$revisions" ]; then
               revision_array="[]"
               message="No active revisions found - container app is already stopped"
-              echo "has_active_revisions=false" >> $GITHUB_OUTPUT
+              echo "has_revisions=false" >> $GITHUB_OUTPUT
             else
               revision_array=$(echo "$revisions" | jq -R -s 'split("\n") | map(select(length > 0))')
-              message="Found active revisions to deactivate"
-              echo "has_active_revisions=true" >> $GITHUB_OUTPUT
+              revision_count=$(echo "$revisions" | wc -w)
+              message="Found $revision_count active revisions to deactivate"
+              echo "has_revisions=true" >> $GITHUB_OUTPUT
             fi
             
             cat > output/result_$UNIQUE_ID.json << EOF
@@ -109,8 +111,8 @@ jobs:
           EOF
           fi
 
-      - name: Deactivate Revisions
-        if: steps.get_revisions.outputs.revisions_found == 'true' && steps.get_revisions.outputs.has_active_revisions == 'true'
+      - name: Deactivate Active Revisions
+        if: steps.get_revisions.outputs.revisions_found == 'true' && steps.get_revisions.outputs.has_revisions == 'true'
         run: |
           set +e
           APP_NAME="${{ inputs.container_app_name }}"
@@ -121,6 +123,8 @@ jobs:
           failure_count=0
           failed_revisions=()
           deactivated_revisions=()
+          
+          echo "Starting deactivation of active revisions..."
           
           for rev in ${{ steps.get_revisions.outputs.revisions }}; do
             echo "Deactivating revision: $rev"
@@ -149,7 +153,7 @@ jobs:
           
           if [ $failure_count -eq 0 ]; then
             final_status="success"
-            message="Successfully deactivated all $success_count revisions"
+            message="Successfully deactivated all $success_count active revisions - container app is now stopped"
             error_msg="null"
           else
             final_status="failed"
@@ -182,14 +186,14 @@ jobs:
           }
           EOF
 
-      - name: Handle Already Stopped Case
-        if: steps.get_revisions.outputs.revisions_found == 'true' && steps.get_revisions.outputs.has_active_revisions == 'false'
+      - name: Handle No Active Revisions Case
+        if: steps.get_revisions.outputs.revisions_found == 'true' && steps.get_revisions.outputs.has_revisions == 'false'
         run: |
           APP_NAME="${{ inputs.container_app_name }}"
           RESOURCE_GROUP="${{ secrets.AZURE_RESOURCE_GROUP }}"
           UNIQUE_ID="${{ inputs.unique_id }}"
           
-          echo "Container app is already stopped - no active revisions found"
+          echo "No active revisions found - container app is already stopped"
           
           cat > output/result_$UNIQUE_ID.json << EOF
           {
