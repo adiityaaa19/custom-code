@@ -6,9 +6,6 @@ on:
       container_app_name:
         description: 'Name of the Azure Container App'
         required: true
-      resource_group:
-        description: 'Azure Resource Group Name'
-        required: true
       unique_id:
         description: 'Unique identifier for tracking'
         required: true
