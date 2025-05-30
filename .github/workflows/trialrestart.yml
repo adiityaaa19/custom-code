@@ -28,7 +28,7 @@ jobs:
           # Retrieve the active revision name
           REVISION_NAME=$(az containerapp revision list \
             --name ${{ github.event.inputs.container_app_name }} \
-            --resource-group ${{ github.event.inputs.resource_group }} \
+            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
             --query "[?properties.active==\`true\`].name" \
             --output tsv)
 
@@ -37,7 +37,7 @@ jobs:
           # Restart the active revision
           az containerapp revision restart \
             --name ${{ github.event.inputs.container_app_name }} \
-            --resource-group ${{ github.event.inputs.resource_group }} \
+            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
             --revision $REVISION_NAME
 
       - name: Upload result artifact
