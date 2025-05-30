@@ -4,200 +4,50 @@ on:
   workflow_dispatch:
     inputs:
       container_app_name:
-        description: 'Name of the Azure Container App to restart'
+        description: 'Name of the Azure Container App'
+        required: true
+      resource_group:
+        description: 'Azure Resource Group Name'
         required: true
       unique_id:
-        description: 'Unique identifier for tracking this workflow run'
+        description: 'Unique identifier for tracking'
         required: true
 
 jobs:
-  restart-app:
+  restart:
     runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
 
-      - name: Azure Login
+    steps:
+      - name: Log in to Azure
         uses: azure/login@v1
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Initialize Result JSON
+      - name: Restart active revision
         run: |
-          mkdir -p output
-          cat > output/result_${{ inputs.unique_id }}.json << 'EOF'
-          {
-            "run_id": "${{ github.run_id }}",
-            "status": "running",
-            "container_app_name": "${{ inputs.container_app_name }}",
-            "unique_id": "${{ inputs.unique_id }}",
-            "operation": "restart",
-            "resource_group": "${{ secrets.AZURE_RESOURCE_GROUP }}",
-            "restarted_at": null,
-            "error": null,
-            "message": "Starting container app restart process"
-          }
-          EOF
+          # Retrieve the active revision name
+          REVISION_NAME=$(az containerapp revision list \
+            --name ${{ github.event.inputs.container_app_name }} \
+            --resource-group ${{ github.event.inputs.resource_group }} \
+            --query "[?properties.active==\`true\`].name" \
+            --output tsv)
 
-      - name: Check Container App Exists
-        id: check_app
-        run: |
-          set +e
-          APP_NAME="${{ inputs.container_app_name }}"
-          RESOURCE_GROUP="${{ secrets.AZURE_RESOURCE_GROUP }}"
-          UNIQUE_ID="${{ inputs.unique_id }}"
+          echo "Active revision: $REVISION_NAME"
 
-          echo "Checking if container app exists: $APP_NAME in resource group: $RESOURCE_GROUP"
-
-          app_check=$(az containerapp show \
-            --name "$APP_NAME" \
-            --resource-group "$RESOURCE_GROUP" \
-            --query "name" \
-            -o tsv 2>&1)
-
-          EXIT_CODE=$?
-
-          if [ $EXIT_CODE -ne 0 ]; then
-            echo "Container app not found: $app_check"
-            echo "app_exists=false" >> $GITHUB_OUTPUT
-
-            cat > output/result_$UNIQUE_ID.json << EOF
-          {
-            "run_id": "${{ github.run_id }}",
-            "status": "failed",
-            "container_app_name": "$APP_NAME",
-            "unique_id": "$UNIQUE_ID",
-            "operation": "restart",
-            "resource_group": "$RESOURCE_GROUP",
-            "restarted_at": null,
-            "error": "Container app not found",
-            "message": "Container app '$APP_NAME' does not exist in resource group '$RESOURCE_GROUP'"
-          }
-          EOF
-          else
-            echo "Container app found: $app_check"
-            echo "app_exists=true" >> $GITHUB_OUTPUT
-
-            cat > output/result_$UNIQUE_ID.json << EOF
-          {
-            "run_id": "${{ github.run_id }}",
-            "status": "processing",
-            "container_app_name": "$APP_NAME",
-            "unique_id": "$UNIQUE_ID",
-            "operation": "restart",
-            "resource_group": "$RESOURCE_GROUP",
-            "restarted_at": null,
-            "error": null,
-            "message": "Container app found, proceeding with restart"
-          }
-          EOF
-          fi
-
-      - name: Restart Container App by Creating New Revision
-        if: steps.check_app.outputs.app_exists == 'true'
-        run: |
-          set +e
-          APP_NAME="${{ inputs.container_app_name }}"
-          RESOURCE_GROUP="${{ secrets.AZURE_RESOURCE_GROUP }}"
-          UNIQUE_ID="${{ inputs.unique_id }}"
-
-          echo "Creating new revision to restart the container app..."
-
-          # Create a new revision by updating with a timestamp annotation
-          timestamp=$(date +%s)
-
-          az containerapp update \
-            --name "$APP_NAME" \
-            --resource-group "$RESOURCE_GROUP" \
-            --set-env-vars "RESTART_TIMESTAMP=$timestamp" > /dev/null 2>&1
-
-          EXIT_CODE=$?
-
-          if [ $EXIT_CODE -eq 0 ]; then
-            echo "Update command accepted, waiting for revision to stabilize..."
-
-            # Wait for 30 seconds for the revision to stabilize
-            sleep 30
-
-            # Now get the clean revision name
-            clean_revision=$(az containerapp show \
-              --name "$APP_NAME" \
-              --resource-group "$RESOURCE_GROUP" \
-              --query "properties.latestRevisionName" \
-              -o tsv 2>/dev/null | tr -d '[:cntrl:]' | xargs)
-
-            if [ -n "$clean_revision" ]; then
-              echo "Successfully created new revision: $clean_revision"
-
-              provisioning_state=$(az containerapp show \
-                --name "$APP_NAME" \
-                --resource-group "$RESOURCE_GROUP" \
-                --query "properties.provisioningState" \
-                -o tsv 2>/dev/null || echo "Unknown")
-
-              cat > output/result_$UNIQUE_ID.json << EOF
-          {
-            "run_id": "${{ github.run_id }}",
-            "status": "success",
-            "container_app_name": "$APP_NAME",
-            "unique_id": "$UNIQUE_ID",
-            "operation": "restart",
-            "resource_group": "$RESOURCE_GROUP",
-            "restarted_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-            "new_revision": "$clean_revision",
-            "provisioning_state": "$provisioning_state",
-            "error": null,
-            "message": "Successfully restarted container app with new revision: $clean_revision"
-          }
-          EOF
-            else
-              echo "Failed to get clean revision name"
-
-              cat > output/result_$UNIQUE_ID.json << EOF
-          {
-            "run_id": "${{ github.run_id }}",
-            "status": "partial_success",
-            "container_app_name": "$APP_NAME",
-            "unique_id": "$UNIQUE_ID",
-            "operation": "restart",
-            "resource_group": "$RESOURCE_GROUP",
-            "restarted_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-            "new_revision": null,
-            "provisioning_state": null,
-            "error": "Could not verify revision name",
-            "message": "Revision created but could not verify final state"
-          }
-          EOF
-            fi
-          else
-            echo "Failed to create new revision"
-
-            cat > output/result_$UNIQUE_ID.json << EOF
-          {
-            "run_id": "${{ github.run_id }}",
-            "status": "failed",
-            "container_app_name": "$APP_NAME",
-            "unique_id": "$UNIQUE_ID",
-            "operation": "restart",
-            "resource_group": "$RESOURCE_GROUP",
-            "restarted_at": null,
-            "error": "Failed to create new revision",
-            "message": "Could not restart container app"
-          }
-          EOF
-          fi
-
-      - name: Display Results
-        if: always()
-        run: |
-          echo "=== Restart Result ==="
-          if [ -f output/result_${{ inputs.unique_id }}.json ]; then
-            cat output/result_${{ inputs.unique_id }}.json | jq . || cat output/result_${{ inputs.unique_id }}.json
-          fi
+          # Restart the active revision
+          az containerapp revision restart \
+            --name ${{ github.event.inputs.container_app_name }} \
+            --resource-group ${{ github.event.inputs.resource_group }} \
+            --revision $REVISION_NAME
 
       - name: Upload result artifact
-        if: always()
-        uses: actions/upload-artifact@v4
+        run: |
+          mkdir -p artifacts
+          echo "{\"container_app_name\": \"${{ github.event.inputs.container_app_name }}\", \"status\": \"restarted\"}" > artifacts/result_${{ github.event.inputs.unique_id }}.json
+        shell: bash
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
         with:
-          name: "result_${{ inputs.unique_id }}"
-          path: "output/result_${{ inputs.unique_id }}.json"
+          name: result_${{ github.event.inputs.unique_id }}
+          path: artifacts/result_${{ github.event.inputs.unique_id }}.json
