@@ -1,0 +1,87 @@
+name: Deploy Tool to Azure Container AppsMore actions
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "Commit SHA to deploy"
+        required: true
+      tool_dir:
+        description: "Path to tool directory (e.g. tools/user123/tool-xyz123/)"
+        required: true
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    env:
+      TOOL_DIR: ${{ github.event.inputs.tool_dir }}
+
+    steps:
+      - name: Checkout code at requested SHA
+        uses: actions/checkout@v3
+        with:
+          ref: ${{ github.event.inputs.sha }}
+
+      - name: Determine Python file and tool name
+        id: metadata
+        run: |
+          cd "$TOOL_DIR"
+          PY_FILE=$(find . -maxdepth 1 -name '*.py' | head -n 1)
+          TOOL_NAME=$(basename "$PY_FILE" .py)
+          echo "TOOL_NAME=$TOOL_NAME" >> $GITHUB_ENV
+          echo "PY_FILE=$PY_FILE" >> $GITHUB_ENV
+          echo "tool_name=$TOOL_NAME" >> $GITHUB_OUTPUT
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Build and Push Docker Image
+        run: |
+          docker build -t ${{ secrets.AZURE_CONTAINER_REGISTRY }}/$TOOL_NAME:${{ github.event.inputs.sha }} -t ${{ secrets.AZURE_CONTAINER_REGISTRY }}/$TOOL_NAME:latest $TOOL_DIR
+          echo ${{ secrets.AZURE_ACR_PASSWORD }} | docker login ${{ secrets.AZURE_CONTAINER_REGISTRY }} -u ${{ secrets.AZURE_ACR_USERNAME }} --password-stdin
+          docker push ${{ secrets.AZURE_CONTAINER_REGISTRY }}/$TOOL_NAME:${{ github.event.inputs.sha }}
+          docker push ${{ secrets.AZURE_CONTAINER_REGISTRY }}/$TOOL_NAME:latest
+
+      - name: Deploy or Update Azure Container App
+        id: deploy
+        run: |
+          set -e
+          EXISTING_APP=$(az containerapp show --name $TOOL_NAME --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} --query name -o tsv || echo "")
+          if [ -z "$EXISTING_APP" ]; then
+            az containerapp create \
+              --name $TOOL_NAME \
+              --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+              --image ${{ secrets.AZURE_CONTAINER_REGISTRY }}/$TOOL_NAME:${{ github.event.inputs.sha }} \
+              --environment ${{ secrets.AZURE_CONTAINERAPPS_ENVIRONMENT }} \
+              --ingress external --target-port 80 \
+              --registry-server ${{ secrets.AZURE_CONTAINER_REGISTRY }} \
+              --registry-username ${{ secrets.AZURE_ACR_USERNAME }} \
+              --registry-password ${{ secrets.AZURE_ACR_PASSWORD }}
+          else
+            az containerapp update \
+              --name $TOOL_NAME \
+              --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+              --image ${{ secrets.AZURE_CONTAINER_REGISTRY }}/$TOOL_NAME:${{ github.event.inputs.sha }}
+          fi
+          APP_URL=$(az containerapp show --name $TOOL_NAME --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} --query properties.configuration.ingress.fqdn -o tsv)
+          echo "DEPLOYED_URL=https://$APP_URL" >> $GITHUB_ENV
+          echo "DEPLOYED_URL=https://$APP_URL" >> $GITHUB_OUTPUT
+
+      - name: Write deployment info artifact
+        run: |
+          echo "tool_id=$TOOL_NAME" > $TOOL_NAME.txt
+          echo "tool_name=$TOOL_NAME" >> $TOOL_NAME.txt
+          echo "filepath=$TOOL_DIR" >> $TOOL_NAME.txt
+          echo "sha=${{ github.event.inputs.sha }}" >> $TOOL_NAME.txt
+          echo "run_id=${{ github.run_id }}" >> $TOOL_NAME.txt
+          echo "status=success" >> $TOOL_NAME.txt
+          echo "endpoint=${{ steps.deploy.outputs.DEPLOYED_URL }}" >> $TOOL_NAME.txt
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: deployed-url-${{ env.TOOL_NAME }}
+          path: ${{ env.TOOL_NAME }}.txt
