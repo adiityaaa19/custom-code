@@ -1,4 +1,4 @@
-name: Deploy Tool to Azure Container AppsMore actions
+name: Deploy Tool to Azure Container Apps
 
 on:
   workflow_dispatch:
@@ -8,6 +8,9 @@ on:
         required: true
       tool_dir:
         description: "Path to tool directory (e.g. tools/user123/tool-xyz123/)"
+        required: true
+      unique_id:
+        description: "Unique identifier for tracking this workflow run"
         required: true
 
 jobs:
@@ -23,6 +26,25 @@ jobs:
         with:
           ref: ${{ github.event.inputs.sha }}
 
+      - name: Initialize Result JSON
+        run: |
+          mkdir -p output
+          cat > output/result_${{ inputs.unique_id }}.json << 'EOF'
+          {
+            "run_id": "${{ github.run_id }}",
+            "status": "running",
+            "tool_dir": "${{ inputs.tool_dir }}",
+            "sha": "${{ inputs.sha }}",
+            "unique_id": "${{ inputs.unique_id }}",
+            "operation": "deploy",
+            "resource_group": "${{ secrets.AZURE_RESOURCE_GROUP }}",
+            "deployed_at": null,
+            "error": null,
+            "message": "Starting deployment process",
+            "url": null
+          }
+          EOF
+
       - name: Determine Python file and tool name
         id: metadata
         run: |
@@ -32,6 +54,9 @@ jobs:
           echo "TOOL_NAME=$TOOL_NAME" >> $GITHUB_ENV
           echo "PY_FILE=$PY_FILE" >> $GITHUB_ENV
           echo "tool_name=$TOOL_NAME" >> $GITHUB_OUTPUT
+          
+          # Update result JSON with tool name
+          jq --arg tool_name "$TOOL_NAME" '.tool_name = $tool_name' output/result_${{ inputs.unique_id }}.json > output/temp.json && mv output/temp.json output/result_${{ inputs.unique_id }}.json
 
       - name: Azure Login
         uses: azure/login@v1
@@ -44,13 +69,18 @@ jobs:
           echo ${{ secrets.AZURE_ACR_PASSWORD }} | docker login ${{ secrets.AZURE_CONTAINER_REGISTRY }} -u ${{ secrets.AZURE_ACR_USERNAME }} --password-stdin
           docker push ${{ secrets.AZURE_CONTAINER_REGISTRY }}/$TOOL_NAME:${{ github.event.inputs.sha }}
           docker push ${{ secrets.AZURE_CONTAINER_REGISTRY }}/$TOOL_NAME:latest
+          
+          # Update result JSON with image info
+          jq --arg image "${{ secrets.AZURE_CONTAINER_REGISTRY }}/$TOOL_NAME:${{ github.event.inputs.sha }}" '.image = $image' output/result_${{ inputs.unique_id }}.json > output/temp.json && mv output/temp.json output/result_${{ inputs.unique_id }}.json
 
       - name: Deploy or Update Azure Container App
         id: deploy
         run: |
           set -e
           EXISTING_APP=$(az containerapp show --name $TOOL_NAME --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} --query name -o tsv || echo "")
+          
           if [ -z "$EXISTING_APP" ]; then
+            echo "Creating new container app"
             az containerapp create \
               --name $TOOL_NAME \
               --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
@@ -61,27 +91,45 @@ jobs:
               --registry-username ${{ secrets.AZURE_ACR_USERNAME }} \
               --registry-password ${{ secrets.AZURE_ACR_PASSWORD }}
           else
+            echo "Updating existing container app"
             az containerapp update \
               --name $TOOL_NAME \
               --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
               --image ${{ secrets.AZURE_CONTAINER_REGISTRY }}/$TOOL_NAME:${{ github.event.inputs.sha }}
           fi
+          
           APP_URL=$(az containerapp show --name $TOOL_NAME --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} --query properties.configuration.ingress.fqdn -o tsv)
           echo "DEPLOYED_URL=https://$APP_URL" >> $GITHUB_ENV
           echo "DEPLOYED_URL=https://$APP_URL" >> $GITHUB_OUTPUT
+          
+          # Update result JSON with deployment info
+          jq \
+            --arg url "https://$APP_URL" \
+            --arg deployed_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg status "success" \
+            '.url = $url | .deployed_at = $deployed_at | .status = $status | .message = "Deployment completed successfully"' \
+            output/result_${{ inputs.unique_id }}.json > output/temp.json && mv output/temp.json output/result_${{ inputs.unique_id }}.json
 
-      - name: Write deployment info artifact
+      - name: Handle Failure
+        if: failure()
         run: |
-          echo "tool_id=$TOOL_NAME" > $TOOL_NAME.txt
-          echo "tool_name=$TOOL_NAME" >> $TOOL_NAME.txt
-          echo "filepath=$TOOL_DIR" >> $TOOL_NAME.txt
-          echo "sha=${{ github.event.inputs.sha }}" >> $TOOL_NAME.txt
-          echo "run_id=${{ github.run_id }}" >> $TOOL_NAME.txt
-          echo "status=success" >> $TOOL_NAME.txt
-          echo "url=${{ steps.deploy.outputs.DEPLOYED_URL }}" >> $TOOL_NAME.txt
+          jq \
+            --arg status "failed" \
+            --arg error "${{ failure() }}" \
+            '.status = $status | .error = $error | .message = "Deployment failed"' \
+            output/result_${{ inputs.unique_id }}.json > output/temp.json && mv output/temp.json output/result_${{ inputs.unique_id }}.json
 
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4.6.2
+      - name: Display Results
+        if: always()
+        run: |
+          echo "=== Deployment Result ==="
+          if [ -f output/result_${{ inputs.unique_id }}.json ]; then
+            cat output/result_${{ inputs.unique_id }}.json | jq . || cat output/result_${{ inputs.unique_id }}.json
+          fi
+
+      - name: Upload result artifact
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
-          name: deployed-url-${{ env.TOOL_NAME }}
-          path: ${{ env.TOOL_NAME }}.txt
+          name: "result_${{ inputs.unique_id }}"
+          path: "output/result_${{ inputs.unique_id }}.json"
