@@ -2,31 +2,25 @@ name: Update Azure Container App Credentials
 
 on:
   workflow_dispatch:
-    inputs:
-      container_app_name:
-        description: 'Name of the Azure Container App to update'
-        required: true
-      unique_id:
-        description: 'Unique identifier for tracking this workflow run'
-        required: true
-      config_type:
-        description: 'Type of configuration to update (environment/secrets)'
-        required: true
-        default: 'environment'
-        options:
-          - environment
-          - secrets
-      key_name:
-        description: 'Name of the configuration key to update'
-        required: true
-      key_value:
-        description: 'Value to set for the configuration key'
-        required: true
-      is_secret:
-        description: 'Mark as true if this should be treated as a secret value'
-        required: false
-        default: 'false'
-        type: boolean
+   inputs:
+    container_app_name:
+      description: 'Name of the Azure Container App to update'
+      required: true
+    unique_id:
+      description: 'Unique identifier for tracking'
+      required: true
+    config_type:
+      description: 'Type of configuration'
+      required: true
+    key_name:
+      description: 'Name of the key to update'
+      required: true
+    key_value:
+      description: 'Value to set'
+      required: true
+    is_secret:
+      description: 'Whether this is a secret value'
+      required: true
 
 jobs:
   update-config:
