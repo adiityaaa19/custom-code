@@ -68,21 +68,42 @@ jobs:
           echo "Key: $KEY_NAME"
           echo "Is Secret: $IS_SECRET"
           
-          # Escape the value properly for CLI
-          ESCAPED_VALUE=$(printf '%q' "$KEY_VALUE")
+          # Mask sensitive values in logs
+          echo "::add-mask::$KEY_VALUE"
+          
+          # Update Azure CLI to latest version
+          az upgrade --yes --all
           
           if [ "$CONFIG_TYPE" = "environment" ]; then
             if [ "$IS_SECRET" = "true" ]; then
-              UPDATE_CMD="az containerapp update --name $APP_NAME --resource-group $RESOURCE_GROUP --set-secrets $KEY_NAME=$ESCAPED_VALUE --set-env-vars $KEY_NAME=secretref:$KEY_NAME"
+              # First create/update the secret
+              SECRET_CMD="az containerapp secret set --name $APP_NAME --resource-group $RESOURCE_GROUP --secrets $KEY_NAME=$KEY_VALUE"
+              echo "Executing: $SECRET_CMD"
+              secret_output=$(eval "$SECRET_CMD" 2>&1)
+              
+              # Then reference the secret in environment variables
+              ENV_CMD="az containerapp update --name $APP_NAME --resource-group $RESOURCE_GROUP --set-env-vars $KEY_NAME=secretref:$KEY_NAME"
+              echo "Executing: $ENV_CMD"
+              update_output=$(eval "$ENV_CMD" 2>&1)
             else
-              UPDATE_CMD="az containerapp update --name $APP_NAME --resource-group $RESOURCE_GROUP --set-env-vars $KEY_NAME=$ESCAPED_VALUE"
+              # Regular environment variable
+              ENV_CMD="az containerapp update --name $APP_NAME --resource-group $RESOURCE_GROUP --set-env-vars $KEY_NAME=$KEY_VALUE"
+              echo "Executing: $ENV_CMD"
+              update_output=$(eval "$ENV_CMD" 2>&1)
             fi
           elif [ "$CONFIG_TYPE" = "secrets" ]; then
-            UPDATE_CMD="az containerapp update --name $APP_NAME --resource-group $RESOURCE_GROUP --set-secrets $KEY_NAME=$ESCAPED_VALUE"
+            # Just update the secret
+            SECRET_CMD="az containerapp secret set --name $APP_NAME --resource-group $RESOURCE_GROUP --secrets $KEY_NAME=$KEY_VALUE"
+            echo "Executing: $SECRET_CMD"
+            update_output=$(eval "$SECRET_CMD" 2>&1)
           else
             echo "Invalid config type: $CONFIG_TYPE"
             exit 1
           fi
+          
+          EXIT_CODE=$?
+    
+          # Rest of your existing result handling...
           
           echo "Executing: $UPDATE_CMD"
           update_output=$(eval "$UPDATE_CMD" 2>&1)
