@@ -3,7 +3,7 @@ name: Update Azure Container App Credentials
 on:
   workflow_dispatch:
     inputs:
-      container_app_name:
+      deployment_id:
         description: 'Name of the Azure Container App to update'
         required: true
       unique_id:
@@ -41,7 +41,7 @@ jobs:
           {
             "run_id": "${{ github.run_id }}",
             "status": "running",
-            "container_app_name": "${{ inputs.container_app_name }}",
+            "deployment_id": "${{ inputs.deployment_id }}",
             "unique_id": "${{ inputs.unique_id }}",
             "operation": "update_environment",
             "resource_group": "${{ secrets.AZURE_RESOURCE_GROUP }}",
@@ -55,7 +55,7 @@ jobs:
       - name: Update Environment Variable Directly
         run: |
           set +e
-          APP_NAME="${{ inputs.container_app_name }}"
+          APP_NAME="${{ inputs.deployment_id }}"
           RESOURCE_GROUP="${{ secrets.AZURE_RESOURCE_GROUP }}"
           KEY_NAME="${{ inputs.key_name }}"
           KEY_VALUE="${{ inputs.key_value }}"
@@ -74,7 +74,7 @@ jobs:
           {
             "run_id": "${{ github.run_id }}",
             "status": "success",
-            "container_app_name": "$APP_NAME",
+            "deployment_id": "$APP_NAME",
             "unique_id": "$UNIQUE_ID",
             "operation": "update_environment",
             "resource_group": "$RESOURCE_GROUP",
@@ -89,7 +89,7 @@ jobs:
           {
             "run_id": "${{ github.run_id }}",
             "status": "failed",
-            "container_app_name": "$APP_NAME",
+            "deployment_id": "$APP_NAME",
             "unique_id": "$UNIQUE_ID",
             "operation": "update_environment",
             "resource_group": "$RESOURCE_GROUP",
