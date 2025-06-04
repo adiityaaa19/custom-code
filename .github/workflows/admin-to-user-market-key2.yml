@@ -229,8 +229,8 @@ jobs:
 
           echo "Retrieving application URL..."
           APP_URL=$(az containerapp show --name $DEPLOYMENT_ID --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} --query properties.configuration.ingress.fqdn -o tsv)
-          echo "DEPLOYED_URL=https://$APP_URL" >> $GITHUB_ENV
-          echo "DEPLOYED_URL=https://$APP_URL" >> $GITHUB_OUTPUT
+          echo "DEPLOYED_URL=https://$APP_URL/sse" >> $GITHUB_ENV
+          echo "DEPLOYED_URL=https://$APP_URL/sse" >> $GITHUB_OUTPUT
 
           # Final success status
           cat > output/result_${{ env.UNIQUE_ID }}.json << EOF
@@ -243,7 +243,7 @@ jobs:
             "operation": "deploy",
             "resource_group": "${{ secrets.AZURE_RESOURCE_GROUP }}",
             "completed_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-            "endpoint": "https://$APP_URL",
+            "endpoint": "https://$APP_URL/sse",
             "error": null,
             "message": "Deployment completed successfully"
           }
