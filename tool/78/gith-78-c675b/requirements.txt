@@ -1,0 +1,7 @@
+langchain-community
+
+tavily-python
+
+python-dotenv
+
+fastmcp
