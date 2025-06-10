@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tool_id:
-        description: "Deployment ID (unique container/image name, e.g. toolid_userid_xxx)"
+        description: "tool id (unique container/image name, e.g. toolid_userid_xxx)"
         required: true
       unique_id:
         description: "Unique identifier for tracking this workflow run"
