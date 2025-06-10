@@ -10,7 +10,6 @@ Tavily_API_KEY = os.getenv("TAVILY_API_KEY", "tvly-DWFpzt7DDn02pTtsBNRcOhBhFObif
 
 mcp = FastMCP(
     name="brave",
-    port=80,
     timeout=30,
     debug=True
 )
