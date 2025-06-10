@@ -17,11 +17,6 @@ jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
 
-    env:
-      tool_id: ${{ github.event.inputs.tool_id }}
-      UNIQUE_ID: ${{ github.event.inputs.unique_id }}
-      TOOL_DIR: ${{ github.event.inputs.tool_dir }}
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -29,13 +24,13 @@ jobs:
       - name: Initialize Result JSON
         run: |
           mkdir -p output
-          cat > output/result_${{ env.UNIQUE_ID }}.json << 'EOF'
+          cat > output/result_${{ inputs.unique_id }}.json << 'EOF'
           {
             "run_id": "${{ github.run_id }}",
             "status": "running",
-            "tool_id": "${{ env.tool_id }}",
-            "unique_id": "${{ env.UNIQUE_ID }}",
-            "tool_dir": "${{ env.TOOL_DIR }}",
+            "tool_id": "${{ inputs.tool_id }}",
+            "unique_id": "${{ inputs.unique_id }}",
+            "tool_dir": "${{ inputs.tool_dir }}",
             "operation": "deploy",
             "resource_group": "${{ secrets.AZURE_RESOURCE_GROUP }}",
             "completed_at": null,
@@ -47,15 +42,15 @@ jobs:
 
       - name: Validate deployment ID format
         run: |
-          if ! [[ "$tool_id" =~ ^[a-z0-9-]{1,32}$ ]]; then
+          if ! [[ "${{ inputs.tool_id }}" =~ ^[a-z0-9-]{1,32}$ ]]; then
             echo "::error::Invalid tool_id format. Must be lowercase alphanumeric with hyphens, max 32 chars."
-            cat > output/result_${{ env.UNIQUE_ID }}.json << EOF
+            cat > output/result_${{ inputs.unique_id }}.json << EOF
           {
             "run_id": "${{ github.run_id }}",
             "status": "failed",
-            "tool_id": "${{ env.tool_id }}",
-            "unique_id": "${{ env.UNIQUE_ID }}",
-            "tool_dir": "${{ env.TOOL_DIR }}",
+            "tool_id": "${{ inputs.tool_id }}",
+            "unique_id": "${{ inputs.unique_id }}",
+            "tool_dir": "${{ inputs.tool_dir }}",
             "operation": "deploy",
             "resource_group": "${{ secrets.AZURE_RESOURCE_GROUP }}",
             "completed_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
@@ -69,55 +64,45 @@ jobs:
 
       - name: Verify tool directory exists
         run: |
-          if [ ! -d "$TOOL_DIR" ]; then
-            echo "::error::Tool directory '$TOOL_DIR' not found"
-            cat > output/result_${{ env.UNIQUE_ID }}.json << EOF
+          if [ ! -d "${{ inputs.tool_dir }}" ]; then
+            echo "::error::Tool directory '${{ inputs.tool_dir }}' not found"
+            cat > output/result_${{ inputs.unique_id }}.json << EOF
           {
             "run_id": "${{ github.run_id }}",
             "status": "failed",
-            "tool_id": "${{ env.tool_id }}",
-            "unique_id": "${{ env.UNIQUE_ID }}",
-            "tool_dir": "${{ env.TOOL_DIR }}",
+            "tool_id": "${{ inputs.tool_id }}",
+            "unique_id": "${{ inputs.unique_id }}",
+            "tool_dir": "${{ inputs.tool_dir }}",
             "operation": "deploy",
             "resource_group": "${{ secrets.AZURE_RESOURCE_GROUP }}",
             "completed_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
             "endpoint": null,
             "error": "Tool directory not found",
-            "message": "Tool directory '$TOOL_DIR' not found"
+            "message": "Tool directory '${{ inputs.tool_dir }}' not found"
           }
           EOF
             exit 1
           fi
 
-          if [ ! -f "$TOOL_DIR/Dockerfile" ]; then
-            echo "::error::Dockerfile not found in $TOOL_DIR"
-            cat > output/result_${{ env.UNIQUE_ID }}.json << EOF
+          if [ ! -f "${{ inputs.tool_dir }}/Dockerfile" ]; then
+            echo "::error::Dockerfile not found in ${{ inputs.tool_dir }}"
+            cat > output/result_${{ inputs.unique_id }}.json << EOF
           {
             "run_id": "${{ github.run_id }}",
             "status": "failed",
-            "tool_id": "${{ env.tool_id }}",
-            "unique_id": "${{ env.UNIQUE_ID }}",
-            "tool_dir": "${{ env.TOOL_DIR }}",
+            "tool_id": "${{ inputs.tool_id }}",
+            "unique_id": "${{ inputs.unique_id }}",
+            "tool_dir": "${{ inputs.tool_dir }}",
             "operation": "deploy",
             "resource_group": "${{ secrets.AZURE_RESOURCE_GROUP }}",
             "completed_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
             "endpoint": null,
             "error": "Dockerfile not found",
-            "message": "Dockerfile not found in $TOOL_DIR"
+            "message": "Dockerfile not found in ${{ inputs.tool_dir }}"
           }
           EOF
             exit 1
           fi
-
-      - name: Set deployment metadata
-        id: metadata
-        run: |
-          echo "tool_id=${tool_id}" >> $GITHUB_ENV
-          echo "tool_id=${tool_id}" >> $GITHUB_OUTPUT
-          echo "UNIQUE_ID=${UNIQUE_ID}" >> $GITHUB_ENV
-          echo "unique_id=${UNIQUE_ID}" >> $GITHUB_OUTPUT
-          echo "TOOL_DIR=${TOOL_DIR}" >> $GITHUB_ENV
-          echo "tool_dir=${TOOL_DIR}" >> $GITHUB_OUTPUT
 
       - name: Azure Login
         uses: azure/login@v1
@@ -126,18 +111,18 @@ jobs:
 
       - name: Build and Push Docker Image
         run: |
-          echo "Building Docker image from $TOOL_DIR..."
-          docker build -t ${{ secrets.AZURE_CONTAINER_REGISTRY }}/$tool_id:latest $TOOL_DIR
+          echo "Building Docker image from ${{ inputs.tool_dir }}..."
+          docker build -t ${{ secrets.AZURE_CONTAINER_REGISTRY }}/${{ inputs.tool_id }}:latest ${{ inputs.tool_dir }}
           echo ${{ secrets.AZURE_ACR_PASSWORD }} | docker login ${{ secrets.AZURE_CONTAINER_REGISTRY }} -u ${{ secrets.AZURE_ACR_USERNAME }} --password-stdin
-          docker push ${{ secrets.AZURE_CONTAINER_REGISTRY }}/$tool_id:latest
+          docker push ${{ secrets.AZURE_CONTAINER_REGISTRY }}/${{ inputs.tool_id }}:latest
 
-          cat > output/result_${{ env.UNIQUE_ID }}.json << EOF
+          cat > output/result_${{ inputs.unique_id }}.json << EOF
           {
             "run_id": "${{ github.run_id }}",
             "status": "processing",
-            "tool_id": "${{ env.tool_id }}",
-            "unique_id": "${{ env.UNIQUE_ID }}",
-            "tool_dir": "${{ env.TOOL_DIR }}",
+            "tool_id": "${{ inputs.tool_id }}",
+            "unique_id": "${{ inputs.unique_id }}",
+            "tool_dir": "${{ inputs.tool_dir }}",
             "operation": "deploy",
             "resource_group": "${{ secrets.AZURE_RESOURCE_GROUP }}",
             "completed_at": null,
@@ -152,14 +137,14 @@ jobs:
         run: |
           set -e
           echo "Checking for existing container app..."
-          EXISTING_APP=$(az containerapp show --name $tool_id --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} --query name -o tsv || echo "")
+          EXISTING_APP=$(az containerapp show --name ${{ inputs.tool_id }} --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} --query name -o tsv || echo "")
 
           if [ -z "$EXISTING_APP" ]; then
             echo "Creating new container app..."
             az containerapp create \
-              --name $tool_id \
+              --name ${{ inputs.tool_id }} \
               --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
-              --image ${{ secrets.AZURE_CONTAINER_REGISTRY }}/$tool_id:latest \
+              --image ${{ secrets.AZURE_CONTAINER_REGISTRY }}/${{ inputs.tool_id }}:latest \
               --environment ${{ secrets.AZURE_CONTAINERAPPS_ENVIRONMENT }} \
               --ingress external --target-port 8000 \
               --registry-server ${{ secrets.AZURE_CONTAINER_REGISTRY }} \
@@ -168,23 +153,23 @@ jobs:
           else
             echo "Updating existing container app..."
             az containerapp update \
-              --name $tool_id \
+              --name ${{ inputs.tool_id }} \
               --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
-              --image ${{ secrets.AZURE_CONTAINER_REGISTRY }}/$tool_id:latest
+              --image ${{ secrets.AZURE_CONTAINER_REGISTRY }}/${{ inputs.tool_id }}:latest
           fi
 
           echo "Retrieving application URL..."
-          APP_URL=$(az containerapp show --name $tool_id --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} --query properties.configuration.ingress.fqdn -o tsv)
+          APP_URL=$(az containerapp show --name ${{ inputs.tool_id }} --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} --query properties.configuration.ingress.fqdn -o tsv)
           echo "DEPLOYED_URL=https://$APP_URL/sse" >> $GITHUB_ENV
           echo "DEPLOYED_URL=https://$APP_URL/sse" >> $GITHUB_OUTPUT
 
-          cat > output/result_${{ env.UNIQUE_ID }}.json << EOF
+          cat > output/result_${{ inputs.unique_id }}.json << EOF
           {
             "run_id": "${{ github.run_id }}",
             "status": "success",
-            "tool_id": "${{ env.tool_id }}",
-            "unique_id": "${{ env.UNIQUE_ID }}",
-            "tool_dir": "${{ env.TOOL_DIR }}",
+            "tool_id": "${{ inputs.tool_id }}",
+            "unique_id": "${{ inputs.unique_id }}",
+            "tool_dir": "${{ inputs.tool_dir }}",
             "operation": "deploy",
             "resource_group": "${{ secrets.AZURE_RESOURCE_GROUP }}",
             "completed_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
@@ -198,13 +183,13 @@ jobs:
         if: always()
         run: |
           echo "=== Deployment Result ==="
-          if [ -f output/result_${{ env.UNIQUE_ID }}.json ]; then
-            cat output/result_${{ env.UNIQUE_ID }}.json | jq . || cat output/result_${{ env.UNIQUE_ID }}.json
+          if [ -f output/result_${{ inputs.unique_id }}.json ]; then
+            cat output/result_${{ inputs.unique_id }}.json | jq . || cat output/result_${{ inputs.unique_id }}.json
           fi
 
       - name: Upload result artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: "result_${{ env.UNIQUE_ID }}"
-          path: "output/result_${{ env.UNIQUE_ID }}.json"
+          name: "result_${{ inputs.unique_id }}"
+          path: "output/result_${{ inputs.unique_id }}.json"
