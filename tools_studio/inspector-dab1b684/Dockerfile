@@ -1,5 +1,10 @@
-FROM node:alpine3.21
+FROM node:18-alpine3.21
 
-RUN npm install i @modelcontextprotocol/inspector
+# Install MCP Inspector
+RUN npm install -g @modelcontextprotocol/inspector
 
+# Expose both frontend and backend ports
+EXPOSE 6274 6277
+
+# Run the inspector
 CMD ["npx", "@modelcontextprotocol/inspector"]
