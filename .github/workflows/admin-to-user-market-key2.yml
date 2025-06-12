@@ -1,3 +1,7 @@
+
+
+
+
 name: Deploy Tool to Azure Container Apps
 
 on:
@@ -213,9 +217,7 @@ jobs:
               --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
               --image ${{ secrets.AZURE_CONTAINER_REGISTRY }}/$DEPLOYMENT_ID:latest \
               --environment ${{ secrets.AZURE_CONTAINERAPPS_ENVIRONMENT }} \
-              --ingress external --target-port 6274 \
-              --enable-dapr \
-              --dapr-app-port 6277
+              --ingress external --target-port 8000 \
               --registry-server ${{ secrets.AZURE_CONTAINER_REGISTRY }} \
               --registry-username ${{ secrets.AZURE_ACR_USERNAME }} \
               --registry-password ${{ secrets.AZURE_ACR_PASSWORD }} \
