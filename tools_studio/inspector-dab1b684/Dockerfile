@@ -1,3 +1,5 @@
 FROM node:alpine3.21
 
-CMD ["npx @modelcontextprotocol/inspector"] 
+RUN npm install -g @modelcontextprotocol/inspector
+
+CMD ["npx", "@modelcontextprotocol/inspector"]
