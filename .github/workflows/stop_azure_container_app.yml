@@ -1,0 +1,226 @@
+name: Stop Azure Container App by Deactivating Revisions
+
+on:
+  workflow_dispatch:
+    inputs:
+      container_app_name:
+        description: 'Name of the Container App to stop'
+        required: true
+        type: string
+      unique_id:
+        description: 'Unique identifier for tracking this workflow run'
+        required: true
+
+jobs:
+  stop-app:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Initialize Result JSON
+        run: |
+          mkdir -p output
+          cat > output/result_${{ inputs.unique_id }}.json << 'EOF'
+          {
+            "run_id": "${{ github.run_id }}",
+            "status": "running",
+            "container_app_name": "${{ inputs.container_app_name }}",
+            "unique_id": "${{ inputs.unique_id }}",
+            "operation": "stop",
+            "resource_group": "${{ secrets.AZURE_RESOURCE_GROUP }}",
+            "stopped_at": null,
+            "revisions": [],
+            "error": null,
+            "message": "Starting container app stop process"
+          }
+          EOF
+
+      - name: Get Active Revisions
+        id: get_revisions
+        run: |
+          set +e
+          APP_NAME="${{ inputs.container_app_name }}"
+          RESOURCE_GROUP="${{ secrets.AZURE_RESOURCE_GROUP }}"
+          UNIQUE_ID="${{ inputs.unique_id }}"
+          
+          echo "Getting active revisions for: $APP_NAME in resource group: $RESOURCE_GROUP"
+          
+          # Get only active revisions
+          revisions=$(az containerapp revision list \
+            --name "$APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --query "[?properties.active].name" \
+            -o tsv 2>&1)
+
+          EXIT_CODE=$?
+          
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "Failed to get revisions: $revisions"
+            echo "revisions_found=false" >> $GITHUB_OUTPUT
+            
+            cat > output/result_$UNIQUE_ID.json << EOF
+          {
+            "run_id": "${{ github.run_id }}",
+            "status": "failed",
+            "container_app_name": "$APP_NAME",
+            "unique_id": "$UNIQUE_ID",
+            "operation": "stop",
+            "resource_group": "$RESOURCE_GROUP",
+            "stopped_at": null,
+            "revisions": [],
+            "error": "Failed to retrieve revisions",
+            "message": "Error getting active revisions: $revisions"
+          }
+          EOF
+          else
+            echo "Found active revisions: $revisions"
+            echo "revisions_found=true" >> $GITHUB_OUTPUT
+            echo "revisions=$revisions" >> $GITHUB_OUTPUT
+            
+            # Convert revisions to JSON array format
+            if [ -z "$revisions" ]; then
+              revision_array="[]"
+              message="No active revisions found - container app is already stopped"
+              echo "has_revisions=false" >> $GITHUB_OUTPUT
+            else
+              revision_array=$(echo "$revisions" | jq -R -s 'split("\n") | map(select(length > 0))')
+              revision_count=$(echo "$revisions" | wc -w)
+              message="Found $revision_count active revisions to deactivate"
+              echo "has_revisions=true" >> $GITHUB_OUTPUT
+            fi
+            
+            cat > output/result_$UNIQUE_ID.json << EOF
+          {
+            "run_id": "${{ github.run_id }}",
+            "status": "processing",
+            "container_app_name": "$APP_NAME",
+            "unique_id": "$UNIQUE_ID",
+            "operation": "stop",
+            "resource_group": "$RESOURCE_GROUP",
+            "stopped_at": null,
+            "revisions": $revision_array,
+            "error": null,
+            "message": "$message"
+          }
+          EOF
+          fi
+
+      - name: Deactivate Active Revisions
+        if: steps.get_revisions.outputs.revisions_found == 'true' && steps.get_revisions.outputs.has_revisions == 'true'
+        run: |
+          set +e
+          APP_NAME="${{ inputs.container_app_name }}"
+          RESOURCE_GROUP="${{ secrets.AZURE_RESOURCE_GROUP }}"
+          UNIQUE_ID="${{ inputs.unique_id }}"
+          
+          success_count=0
+          failure_count=0
+          failed_revisions=()
+          deactivated_revisions=()
+          
+          echo "Starting deactivation of active revisions..."
+          
+          for rev in ${{ steps.get_revisions.outputs.revisions }}; do
+            echo "Deactivating revision: $rev"
+            
+            deactivate_output=$(az containerapp revision deactivate \
+              --name "$APP_NAME" \
+              --resource-group "$RESOURCE_GROUP" \
+              --revision "$rev" 2>&1)
+            
+            STATUS=$?
+            
+            if [ $STATUS -eq 0 ]; then
+              echo "Successfully deactivated revision: $rev"
+              ((success_count++))
+              deactivated_revisions+=("$rev")
+            else
+              echo "Failed to deactivate revision: $rev"
+              echo "Error: $deactivate_output"
+              ((failure_count++))
+              failed_revisions+=("$rev")
+            fi
+          done
+          
+          # Create detailed result
+          total_revisions=$(echo "${{ steps.get_revisions.outputs.revisions }}" | wc -w)
+          
+          if [ $failure_count -eq 0 ]; then
+            final_status="success"
+            message="Successfully deactivated all $success_count active revisions - container app is now stopped"
+            error_msg="null"
+          else
+            final_status="failed"
+            message="Deactivated $success_count out of $total_revisions revisions. $failure_count failed."
+            error_msg="Failed to deactivate revisions: ${failed_revisions[*]}"
+          fi
+          
+          # Get final revision list as JSON array
+          if [ ${#deactivated_revisions[@]} -eq 0 ]; then
+            deactivated_array="[]"
+          else
+            deactivated_array=$(printf '%s\n' "${deactivated_revisions[@]}" | jq -R -s 'split("\n") | map(select(length > 0))')
+          fi
+          
+          cat > output/result_$UNIQUE_ID.json << EOF
+          {
+            "run_id": "${{ github.run_id }}",
+            "status": "$final_status",
+            "container_app_name": "$APP_NAME",
+            "unique_id": "$UNIQUE_ID",
+            "operation": "stop",
+            "resource_group": "$RESOURCE_GROUP",
+            "stopped_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "revisions": $deactivated_array,
+            "total_revisions": $total_revisions,
+            "success_count": $success_count,
+            "failure_count": $failure_count,
+            "error": $error_msg,
+            "message": "$message"
+          }
+          EOF
+
+      - name: Handle No Active Revisions Case
+        if: steps.get_revisions.outputs.revisions_found == 'true' && steps.get_revisions.outputs.has_revisions == 'false'
+        run: |
+          APP_NAME="${{ inputs.container_app_name }}"
+          RESOURCE_GROUP="${{ secrets.AZURE_RESOURCE_GROUP }}"
+          UNIQUE_ID="${{ inputs.unique_id }}"
+          
+          echo "No active revisions found - container app is already stopped"
+          
+          cat > output/result_$UNIQUE_ID.json << EOF
+          {
+            "run_id": "${{ github.run_id }}",
+            "status": "success",
+            "container_app_name": "$APP_NAME",
+            "unique_id": "$UNIQUE_ID",
+            "operation": "stop",
+            "resource_group": "$RESOURCE_GROUP",
+            "stopped_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "revisions": [],
+            "error": null,
+            "message": "Container app was already stopped - no active revisions to deactivate"
+          }
+          EOF
+
+      - name: Display Results
+        if: always()
+        run: |
+          echo "=== Stop Result ==="
+          if [ -f output/result_${{ inputs.unique_id }}.json ]; then
+            cat output/result_${{ inputs.unique_id }}.json | jq . || cat output/result_${{ inputs.unique_id }}.json
+          fi
+
+      - name: Upload result artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: "result_${{ inputs.unique_id }}"
+          path: "output/result_${{ inputs.unique_id }}.json"
