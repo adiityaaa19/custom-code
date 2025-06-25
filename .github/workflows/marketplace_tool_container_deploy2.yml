@@ -25,7 +25,7 @@ jobs:
       UNIQUE_ID: ${{ github.event.inputs.unique_id }}
       TOOL_DIR: ${{ github.event.inputs.tool_dir }}
       CREDENTIALS_JSON: ${{ github.event.inputs.credentials }}
-      ACR_IMAGE_NAME: ${{ format('{0}/{1}:latest', secrets.AZURE_CONTAINER_REGISTRY, github.event.inputs.tool_dir) }}
+      ACR_IMAGE_NAME: ${{ format('{0}/{1}', secrets.AZURE_CONTAINER_REGISTRY, github.event.inputs.tool_dir) }}
 
     steps:
       - name: Checkout code
@@ -130,7 +130,7 @@ jobs:
       - name: Verify ACR image exists
         run: |
           echo "Checking if ACR image exists: $ACR_IMAGE_NAME"
-          if ! az acr repository show --name ${{ secrets.AZURE_CONTAINER_REGISTRY_NAME }} --image "$TOOL_DIR:latest" > /dev/null 2>&1; then
+          if ! az acr repository show --name ${{ secrets.AZURE_CONTAINER_REGISTRY_NAME }} --image "$TOOL_DIR" > /dev/null 2>&1; then
             echo "::error::ACR image not found: $ACR_IMAGE_NAME"
             
             cat > output/result_${{ env.UNIQUE_ID }}.json << EOF
