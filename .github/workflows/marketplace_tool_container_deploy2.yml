@@ -1,23 +1,27 @@
+
+
+
+
 name: Deploy Tool to Azure Container Apps
 
 on:
   workflow_dispatch:
     inputs:
       deployment_id:
-        description: "Deployment ID (unique container app name, e.g. toolid-userid-xxx)"
+        description: "Deployment ID (unique container/image name, e.g. toolid_userid_xxx)"
         required: true
       unique_id:
         description: "Unique identifier for tracking this workflow run"
         required: true
       tool_dir:
-        description: "Path to tool directory (e.g. tools_studio/tool-id) - will be used as ACR image name"
+        description: "Path to tool directory (e.g. tools_studio/tool-id)"
         required: true
       credentials:
         description: "JSON string of credentials to pass to container"
         required: true
 
 jobs:
-  deploy-from-acr:
+  build-and-deploy:
     runs-on: ubuntu-latest
 
     env:
@@ -25,7 +29,6 @@ jobs:
       UNIQUE_ID: ${{ github.event.inputs.unique_id }}
       TOOL_DIR: ${{ github.event.inputs.tool_dir }}
       CREDENTIALS_JSON: ${{ github.event.inputs.credentials }}
-      ACR_IMAGE_NAME: ${{ format('{0}/{1}', secrets.AZURE_CONTAINER_REGISTRY, github.event.inputs.tool_dir) }}
 
     steps:
       - name: Checkout code
@@ -41,13 +44,12 @@ jobs:
             "deployment_id": "${{ env.DEPLOYMENT_ID }}",
             "unique_id": "${{ env.UNIQUE_ID }}",
             "tool_dir": "${{ env.TOOL_DIR }}",
-            "acr_image": "${{ env.ACR_IMAGE_NAME }}",
             "operation": "deploy",
             "resource_group": "${{ secrets.AZURE_RESOURCE_GROUP }}",
             "completed_at": null,
             "endpoint": null,
             "error": null,
-            "message": "Starting deployment process using existing ACR image"
+            "message": "Starting deployment process"
           }
           EOF
 
@@ -63,7 +65,6 @@ jobs:
             "deployment_id": "${{ env.DEPLOYMENT_ID }}",
             "unique_id": "${{ env.UNIQUE_ID }}",
             "tool_dir": "${{ env.TOOL_DIR }}",
-            "acr_image": "${{ env.ACR_IMAGE_NAME }}",
             "operation": "deploy",
             "resource_group": "${{ secrets.AZURE_RESOURCE_GROUP }}",
             "completed_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
@@ -74,6 +75,16 @@ jobs:
           EOF
             exit 1
           fi
+
+      - name: Set deployment metadata
+        id: metadata
+        run: |
+          echo "DEPLOYMENT_ID=${DEPLOYMENT_ID}" >> $GITHUB_ENV
+          echo "deployment_id=${DEPLOYMENT_ID}" >> $GITHUB_OUTPUT
+          echo "UNIQUE_ID=${UNIQUE_ID}" >> $GITHUB_ENV
+          echo "unique_id=${UNIQUE_ID}" >> $GITHUB_OUTPUT
+          echo "TOOL_DIR=${TOOL_DIR}" >> $GITHUB_ENV
+          echo "tool_dir=${TOOL_DIR}" >> $GITHUB_OUTPUT
 
       - name: Azure Login
         uses: azure/login@v1
@@ -95,7 +106,6 @@ jobs:
             "deployment_id": "${{ env.DEPLOYMENT_ID }}",
             "unique_id": "${{ env.UNIQUE_ID }}",
             "tool_dir": "${{ env.TOOL_DIR }}",
-            "acr_image": "${{ env.ACR_IMAGE_NAME }}",
             "operation": "deploy",
             "resource_group": "${{ secrets.AZURE_RESOURCE_GROUP }}",
             "completed_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
@@ -117,56 +127,12 @@ jobs:
             "deployment_id": "${{ env.DEPLOYMENT_ID }}",
             "unique_id": "${{ env.UNIQUE_ID }}",
             "tool_dir": "${{ env.TOOL_DIR }}",
-            "acr_image": "${{ env.ACR_IMAGE_NAME }}",
             "operation": "deploy",
             "resource_group": "${{ secrets.AZURE_RESOURCE_GROUP }}",
             "completed_at": null,
             "endpoint": null,
             "error": null,
             "message": "Credentials validated successfully - proceeding with deployment"
-          }
-          EOF
-
-      - name: Verify ACR image exists
-        run: |
-          echo "Checking if ACR image exists: $ACR_IMAGE_NAME"
-          if ! az acr repository show --name ${{ secrets.AZURE_CONTAINER_REGISTRY_NAME }} --image "$TOOL_DIR" > /dev/null 2>&1; then
-            echo "::error::ACR image not found: $ACR_IMAGE_NAME"
-            
-            cat > output/result_${{ env.UNIQUE_ID }}.json << EOF
-          {
-            "run_id": "${{ github.run_id }}",
-            "status": "failed",
-            "deployment_id": "${{ env.DEPLOYMENT_ID }}",
-            "unique_id": "${{ env.UNIQUE_ID }}",
-            "tool_dir": "${{ env.TOOL_DIR }}",
-            "acr_image": "${{ env.ACR_IMAGE_NAME }}",
-            "operation": "deploy",
-            "resource_group": "${{ secrets.AZURE_RESOURCE_GROUP }}",
-            "completed_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-            "endpoint": null,
-            "error": "ACR image not found",
-            "message": "ACR image not found: $ACR_IMAGE_NAME"
-          }
-          EOF
-            exit 1
-          fi
-
-          # Update status
-          cat > output/result_${{ env.UNIQUE_ID }}.json << EOF
-          {
-            "run_id": "${{ github.run_id }}",
-            "status": "processing",
-            "deployment_id": "${{ env.DEPLOYMENT_ID }}",
-            "unique_id": "${{ env.UNIQUE_ID }}",
-            "tool_dir": "${{ env.TOOL_DIR }}",
-            "acr_image": "${{ env.ACR_IMAGE_NAME }}",
-            "operation": "deploy",
-            "resource_group": "${{ secrets.AZURE_RESOURCE_GROUP }}",
-            "completed_at": null,
-            "endpoint": null,
-            "error": null,
-            "message": "ACR image verified - proceeding with container app deployment"
           }
           EOF
 
@@ -178,11 +144,11 @@ jobs:
           EXISTING_APP=$(az containerapp show --name $DEPLOYMENT_ID --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} --query name -o tsv || echo "")
 
           if [ -z "$EXISTING_APP" ]; then
-            echo "Creating new container app with deployment_id as name..."
+            echo "Creating new container app..."
             az containerapp create \
               --name $DEPLOYMENT_ID \
               --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
-              --image $ACR_IMAGE_NAME \
+              --image ${{ secrets.AZURE_CONTAINER_REGISTRY }}/$TOOL_DIR \
               --environment ${{ secrets.AZURE_CONTAINERAPPS_ENVIRONMENT }} \
               --ingress external --target-port 8000 \
               --registry-server ${{ secrets.AZURE_CONTAINER_REGISTRY }} \
@@ -194,7 +160,7 @@ jobs:
             az containerapp update \
               --name $DEPLOYMENT_ID \
               --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
-              --image $ACR_IMAGE_NAME \
+              --image ${{ secrets.AZURE_CONTAINER_REGISTRY }}/$DEPLOYMENT_ID:latest \
               --set-env-vars $ENV_VARS
           fi
 
@@ -211,13 +177,12 @@ jobs:
             "deployment_id": "${{ env.DEPLOYMENT_ID }}",
             "unique_id": "${{ env.UNIQUE_ID }}",
             "tool_dir": "${{ env.TOOL_DIR }}",
-            "acr_image": "${{ env.ACR_IMAGE_NAME }}",
             "operation": "deploy",
             "resource_group": "${{ secrets.AZURE_RESOURCE_GROUP }}",
             "completed_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
             "endpoint": "https://$APP_URL/sse",
             "error": null,
-            "message": "Deployment completed successfully using existing ACR image"
+            "message": "Deployment completed successfully"
           }
           EOF
 
