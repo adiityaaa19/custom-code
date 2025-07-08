@@ -1,0 +1,38 @@
+name: Assign User to MCP Pool
+
+on:
+  workflow_dispatch:
+    inputs:
+      user_id:
+        required: true
+      api_key:
+        required: true
+
+jobs:
+  assign-user:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Inject User Credentials
+        run: |
+          # Update ENV vars (takes ~2s)
+          az containerapp update \
+            --name mcp-generic-pool \
+            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+            --set-env-vars "USER_ID=${{ github.event.inputs.user_id }} API_KEY=${{ github.event.inputs.api_key }}"
+
+      - name: Generate User URL
+        run: |
+          APP_URL=$(az containerapp show \
+            --name mcp-generic-pool \
+            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+            --query properties.configuration.ingress.fqdn -o tsv)
+          echo "USER_URL=https://$APP_URL/user/${{ github.event.inputs.user_id }}/mcp" >> $GITHUB_OUTPUT
+
+      - name: Output Result
+        run: |
+          echo "User MCP URL: ${{ steps.generate-url.outputs.USER_URL }}"
