@@ -5,7 +5,9 @@ on:
     inputs:
       user_id:
         required: true
-      api_key:
+      user_api_key:  # User's key (if needed)
+        required: false
+      tavily_api_key:  # Tavily's key
         required: true
 
 jobs:
@@ -17,13 +19,15 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Inject User Credentials
+      - name: Inject Credentials
         run: |
-          # Update ENV vars (takes ~2s)
           az containerapp update \
             --name mcp-generic-pool \
             --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
-            --set-env-vars "USER_ID=${{ github.event.inputs.user_id }} API_KEY=${{ github.event.inputs.api_key }}"
+            --set-env-vars \
+              "USER_ID=${{ github.event.inputs.user_id }}" \
+              "USER_API_KEY=${{ github.event.inputs.user_api_key }}" \
+              "TAVILY_API_KEY=${{ github.event.inputs.tavily_api_key }}"
 
       - name: Generate User URL
         run: |
@@ -32,7 +36,3 @@ jobs:
             --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
             --query properties.configuration.ingress.fqdn -o tsv)
           echo "USER_URL=https://$APP_URL/user/${{ github.event.inputs.user_id }}/mcp" >> $GITHUB_OUTPUT
-
-      - name: Output Result
-        run: |
-          echo "User MCP URL: ${{ steps.generate-url.outputs.USER_URL }}"
