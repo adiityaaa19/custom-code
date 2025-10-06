@@ -221,7 +221,8 @@ jobs:
               --registry-server ${{ secrets.AZURE_CONTAINER_REGISTRY }} \
               --registry-username ${{ secrets.AZURE_ACR_USERNAME }} \
               --registry-password ${{ secrets.AZURE_ACR_PASSWORD }} \
-              --env-vars $ENV_VARS
+              --env-vars $ENV_VARS \
+              --min-replicas 1
           else
             echo "Updating existing container app..."
             az containerapp update \
