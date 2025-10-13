@@ -63,4 +63,4 @@ def signal_handler(sig, frame):
 signal.signal(signal.SIGINT, signal_handler)
 
 if __name__ == "__main__":
-    mcp.run(transport="http", host="0.0.0.0", port=8000, path="/mcp")
+    mcp.run(transport="http",path="/mcp")
