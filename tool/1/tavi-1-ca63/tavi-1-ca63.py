@@ -10,7 +10,9 @@ logger = logging.getLogger(__name__)
 Tavily_API_KEY = os.getenv("TAVILY_API_KEY", "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")
 
 mcp = FastMCP(
-    name="tavily-234747"
+    name="tavi-1-ca63",
+    host='0.0.0.0',
+    port=8000
 )
 
 @mcp.tool()
