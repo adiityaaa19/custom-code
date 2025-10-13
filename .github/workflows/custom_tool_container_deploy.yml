@@ -174,7 +174,7 @@ jobs:
             "operation": "deploy",
             "resource_group": "${{ secrets.AZURE_RESOURCE_GROUP }}",
             "completed_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-            "endpoint": "https://$APP_URL/sse",
+            "endpoint": "https://$APP_URL/mcp",
             "error": null,
             "message": "Deployment completed successfully"
           }
