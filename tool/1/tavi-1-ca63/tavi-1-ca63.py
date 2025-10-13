@@ -10,10 +10,7 @@ logger = logging.getLogger(__name__)
 Tavily_API_KEY = os.getenv("TAVILY_API_KEY", "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")
 
 mcp = FastMCP(
-    name="tavily-234747",
-    host='0.0.0.0',
-    port=8000,
-    debug=True
+    name="tavily-234747"
 )
 
 @mcp.tool()
@@ -64,4 +61,4 @@ def signal_handler(sig, frame):
 signal.signal(signal.SIGINT, signal_handler)
 
 if __name__ == "__main__":
-    mcp.run(transport='http')
+    mcp.run(transport="http", host="0.0.0.0", port=8000, path="/mcp")
