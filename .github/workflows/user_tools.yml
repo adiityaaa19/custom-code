@@ -111,7 +111,7 @@ jobs:
             output/result_${{ inputs.unique_id }}.json > output/temp.json && mv output/temp.json output/result_${{ inputs.unique_id }}.json
 
       - name: Handle Failure
-        if: failure()
+        if: ${{ failure() }}
         run: |
           jq \
             --arg status "failed" \
