@@ -1,0 +1,4 @@
+langchain-community
+tavily-python
+python-dotenv
+fastmcp==2.12.4
