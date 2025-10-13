@@ -1,5 +1,5 @@
 from langchain_community.tools.tavily_search import TavilySearchResults
-from mcp.server.fastmcp import FastMCP
+from fastmcp import FastMCP
 import logging
 from dotenv import load_dotenv
 import os
