@@ -10,5 +10,6 @@ EXPOSE 8000
 
 # Command to start the server
 # Replace with the actual start command if different
-CMD ["python", "tool.py"]
+CMD ["python", "gmail.py"]
+
 
