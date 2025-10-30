@@ -46,7 +46,6 @@ jobs:
             "tool_dir": "${{ env.TOOL_DIR }}",
             "operation": "deploy",
             "resource_group": "${{ secrets.AZURE_RESOURCE_GROUP }}",
-            "resource_credentials":"${{ secrets.AZURE_CREDENTIALS }}",
             "completed_at": null,
             "endpoint": null,
             "error": null,
